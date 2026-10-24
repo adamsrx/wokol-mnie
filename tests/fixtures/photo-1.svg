@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 667" width="1000" height="667">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2b4a5e"/><stop offset="1" stop-color="#d99a4e"/></linearGradient>
+    <linearGradient id="hill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1b2f3a"/><stop offset="1" stop-color="#0b0f0e"/></linearGradient>
+  </defs>
+  <rect width="1000" height="667" fill="url(#sky)"/>
+  <circle cx="700" cy="250" r="90" fill="#f1c27a" fill-opacity=".9"/>
+  <path d="M0 470 C 150 380, 260 420, 400 400 S 650 330, 800 380 S 950 430, 1000 410 V 667 H 0 Z" fill="url(#hill)" opacity=".9"/>
+  <path d="M0 540 C 200 480, 350 560, 520 520 S 820 470, 1000 520 V 667 H 0 Z" fill="#0b0f0e" opacity=".8"/>
+  <rect x="430" y="330" width="60" height="140" fill="#1b2f3a"/>
+  <path d="M420 330 L460 270 L500 330 Z" fill="#1b2f3a"/>
+  <text x="40" y="640" font-family="monospace" font-size="22" fill="rgba(255,255,255,.35)">fixture photo 1 (test)</text>
+</svg>

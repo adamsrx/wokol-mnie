@@ -1,0 +1,11 @@
+{
+  "batchcomplete": true,
+  "continue": { "gsroffset": 5, "continue": "gsroffset||" },
+  "query": {
+    "pages": [
+      { "pageid": 2, "ns": 0, "title": "Rynek Główny (album)", "index": 1 },
+      { "pageid": 1, "ns": 0, "title": "Rynek Główny w Krakowie", "index": 2, "coordinates": [ { "lat": 50.0617, "lon": 19.9373, "primary": true, "globe": "earth" } ] },
+      { "pageid": 3, "ns": 0, "title": "Sukiennice w Krakowie", "index": 3, "coordinates": [ { "lat": 50.0616, "lon": 19.9375, "primary": true, "globe": "earth" } ] }
+    ]
+  }
+}

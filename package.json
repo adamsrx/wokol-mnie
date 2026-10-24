@@ -1,0 +1,15 @@
+{
+  "name": "wokol-mnie",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Wokół mnie — karty z polskiej Wikipedii o miejscach w twojej okolicy (statyczna PWA bez backendu).",
+  "type": "module",
+  "scripts": {
+    "start": "python3 -m http.server 8080",
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.56.1",
+    "playwright": "1.56.1"
+  }
+}

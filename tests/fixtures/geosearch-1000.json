@@ -1,0 +1,13 @@
+{
+  "batchcomplete": true,
+  "query": {
+    "geosearch": [
+      { "pageid": 35201, "ns": 0, "title": "Kolumna Zygmunta III Wazy w Warszawie", "lat": 52.24775, "lon": 21.01361, "dist": 92.3, "primary": true },
+      { "pageid": 123, "ns": 0, "title": "Zamek Królewski w Warszawie", "lat": 52.2479, "lon": 21.015, "dist": 210.4, "primary": true },
+      { "pageid": 76112, "ns": 0, "title": "Plac Zamkowy w Warszawie", "lat": 52.24758, "lon": 21.01339, "dist": 246.8, "primary": true },
+      { "pageid": 48803, "ns": 0, "title": "Archikatedra św. Jana Chrzciciela w Warszawie", "lat": 52.24892, "lon": 21.01372, "dist": 318.1, "primary": true },
+      { "pageid": 90455, "ns": 0, "title": "Rynek Starego Miasta w Warszawie", "lat": 52.24975, "lon": 21.01219, "dist": 477.5, "primary": true },
+      { "pageid": 51277, "ns": 0, "title": "Barbakan w Warszawie", "lat": 52.25101, "lon": 21.00981, "dist": 684.9, "primary": true }
+    ]
+  }
+}

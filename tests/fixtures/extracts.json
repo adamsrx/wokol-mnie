@@ -1,0 +1,22 @@
+{
+  "90455": {
+    "pageid": 90455,
+    "ns": 0,
+    "title": "Rynek Starego Miasta w Warszawie",
+    "extract": "Rynek Starego Miasta – centralny plac Starego Miasta w Warszawie, wytyczony na przełomie XIII i XIV wieku. Do końca XVIII wieku pełnił funkcję głównego placu miasta, przy którym mieścił się ratusz. Zniszczony w 1944 roku, został odbudowany do 1953 roku.",
+    "thumbnail": { "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8e/Rynek_Starego_Miasta_Warszawa.jpg/1000px-Rynek_Starego_Miasta_Warszawa.jpg", "width": 1000, "height": 667 }
+  },
+  "123": {
+    "pageid": 123,
+    "ns": 0,
+    "title": "Zamek Królewski w Warszawie",
+    "extract": "Zamek Królewski w Warszawie – barokowo-klasycystyczny zamek królewski znajdujący się w Warszawie przy placu Zamkowym 4. Dawna siedziba książąt mazowieckich, a od XVI wieku rezydencja królów Polski. Zniszczony w czasie II wojny światowej, odbudowany w latach 1971–1984.",
+    "thumbnail": { "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/2/2f/Zamek_Krolewski_Warszawa.jpg/1000px-Zamek_Krolewski_Warszawa.jpg", "width": 1000, "height": 667 }
+  },
+  "76112": {
+    "pageid": 76112,
+    "ns": 0,
+    "title": "Plac Zamkowy w Warszawie",
+    "extract": "Plac Zamkowy – plac w Warszawie położony na Starym Mieście, przed Zamkiem Królewskim."
+  }
+}

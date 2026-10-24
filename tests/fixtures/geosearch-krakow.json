@@ -1,0 +1,11 @@
+{
+  "batchcomplete": true,
+  "query": {
+    "geosearch": [
+      { "pageid": 3, "ns": 0, "title": "Sukiennice w Krakowie", "lat": 50.0616, "lon": 19.9375, "dist": 17.8, "primary": true },
+      { "pageid": 5012, "ns": 0, "title": "Kościół Mariacki w Krakowie", "lat": 50.06167, "lon": 19.93917, "dist": 134.2, "primary": true },
+      { "pageid": 7701, "ns": 0, "title": "Wieża ratuszowa w Krakowie", "lat": 50.06139, "lon": 19.93611, "dist": 92.6, "primary": true },
+      { "pageid": 8822, "ns": 0, "title": "Barbakan w Krakowie", "lat": 50.06556, "lon": 19.94167, "dist": 530.9, "primary": true }
+    ]
+  }
+}
