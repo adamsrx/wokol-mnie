@@ -49,8 +49,12 @@
       <path d="M6 16.5V11a4 4 0 0 1 4-4h8.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
       <path d="M15.5 3.5 19 7l-3.5 3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
     </symbol>
-    <symbol id="i-check" viewBox="0 0 24 24">
-      <path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+    <!-- Serce i zakładka: wypełnienie sterowane zmienną CSS --icon-fill (stan „wciśnięty” przycisku). -->
+    <symbol id="i-heart" viewBox="0 0 24 24">
+      <path d="M12 20.4s-7.2-4.5-9.3-9A5.2 5.2 0 0 1 12 6.4a5.2 5.2 0 0 1 9.3 5c-2.1 4.5-9.3 9-9.3 9Z" style="fill: var(--icon-fill, none)" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="i-bookmark" viewBox="0 0 24 24">
+      <path d="M6.5 3.5h11a1 1 0 0 1 1 1v16l-6.5-4-6.5 4v-16a1 1 0 0 1 1-1Z" style="fill: var(--icon-fill, none)" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
     </symbol>
     <symbol id="i-x" viewBox="0 0 24 24">
       <path d="M6.5 6.5l11 11M17.5 6.5l-11 11" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>
@@ -90,7 +94,7 @@
         <svg class="start-compass" aria-hidden="true"><use href="#i-compass"/></svg>
         <p class="eyebrow">Przewodnik terenowy</p>
         <h1 class="start-title">Wokół mnie</h1>
-        <p class="start-lead">Co ciekawego jest kilkaset metrów od ciebie? Przesuwaj karty i sprawdź, ile wiesz o swojej okolicy.</p>
+        <p class="start-lead">Co ciekawego jest kilkaset metrów od ciebie? Przesuwaj karty, polub to, co cię zaciekawi, i zapisz miejsca na później.</p>
 
         <div class="radius-block">
           <span class="field-label" id="radius-label">Promień</span>
@@ -124,7 +128,11 @@
     <section class="screen screen-around" id="around-screen" hidden>
       <header class="topbar" id="topbar">
         <div class="topbar-row">
-          <p class="progress" data-testid="progress" id="progress" aria-live="polite"></p>
+          <button type="button" class="btn-ghost" data-testid="my-places" id="my-places" aria-label="Moje miejsca" aria-haspopup="dialog" aria-expanded="false" aria-controls="my-places-panel">
+            <svg class="icon" aria-hidden="true"><use href="#i-bookmark"/></svg>
+            <span>Moje miejsca</span>
+            <span class="badge" data-testid="my-places-count" id="my-places-count" hidden></span>
+          </button>
           <button type="button" class="btn-ghost" data-testid="change-place" id="change-place" aria-label="Zmień miejsce">
             <svg class="icon" aria-hidden="true"><use href="#i-back"/></svg>
             <span>Zmień miejsce</span>
@@ -157,6 +165,20 @@
 
       <div class="feed" data-testid="feed" id="feed" role="feed" aria-label="Karty miejsc" hidden></div>
     </section>
+
+    <!-- Panel „Moje miejsca”: zapisane miejsca z odległością i linkami -->
+    <div class="panel-backdrop" data-testid="my-places-panel" id="my-places-panel" role="dialog" aria-modal="true" aria-labelledby="panel-title" hidden>
+      <section class="panel">
+        <header class="panel-head">
+          <h2 class="panel-title" id="panel-title">Moje miejsca</h2>
+          <button type="button" class="btn-ghost btn-ghost-icon" data-testid="panel-close" id="panel-close" aria-label="Zamknij">
+            <svg class="icon" aria-hidden="true"><use href="#i-x"/></svg>
+          </button>
+        </header>
+        <p class="panel-empty" data-testid="my-places-empty" id="panel-empty" hidden>Nic jeszcze nie zapisałeś. Stuknij „Zapisz” na karcie miejsca.</p>
+        <ul class="saved-list" id="panel-list" role="list"></ul>
+      </section>
+    </div>
   </main>
 
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
@@ -171,14 +193,18 @@
         <img class="card-photo" alt="" decoding="async" hidden>
       </div>
       <div class="card-shade" aria-hidden="true"></div>
-      <div class="swipe-label swipe-label-known" aria-hidden="true">Wiedziałem</div>
-      <div class="swipe-label swipe-label-unknown" aria-hidden="true">Nie wiedziałem</div>
-      <div class="card-stamp" aria-hidden="true"><span class="card-stamp-text"></span></div>
+      <div class="swipe-label swipe-label-like" aria-hidden="true">
+        <svg class="icon" aria-hidden="true"><use href="#i-heart"/></svg>
+        <span>Lubię</span>
+      </div>
+      <div class="swipe-label swipe-label-skip" aria-hidden="true">
+        <span>Dalej</span>
+        <svg class="icon" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+      </div>
+      <div class="card-heart" aria-hidden="true"><svg><use href="#i-heart"/></svg></div>
+      <div class="card-liked-mark" aria-hidden="true"><svg class="icon"><use href="#i-heart"/></svg></div>
       <div class="card-body">
-        <p class="card-distance" data-testid="card-distance">
-          <svg class="icon" aria-hidden="true"><use href="#i-pin"/></svg>
-          <span class="card-distance-text"></span>
-        </p>
+        <p class="card-distance" data-testid="card-distance"><svg class="icon" aria-hidden="true"><use href="#i-pin"/></svg><span class="card-distance-text"></span></p>
         <h2 class="card-title" data-testid="card-title"></h2>
         <p class="card-extract" data-testid="card-extract"></p>
         <p class="card-detail-error" hidden>
@@ -196,13 +222,15 @@
           </a>
         </div>
         <div class="card-actions">
-          <button type="button" class="btn btn-secondary btn-answer" data-testid="btn-unknown" data-known="false">
-            <svg class="icon" aria-hidden="true"><use href="#i-x"/></svg>
-            <span>Nie wiedziałem</span>
+          <button type="button" class="btn btn-secondary btn-toggle btn-save" data-testid="btn-save" aria-pressed="false">
+            <svg class="icon" aria-hidden="true"><use href="#i-bookmark"/></svg>
+            <span class="btn-label">Zapisz</span>
           </button>
-          <button type="button" class="btn btn-primary btn-answer" data-testid="btn-known" data-known="true">
-            <svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>
-            <span>Wiedziałem</span>
+          <button type="button" class="btn btn-primary btn-toggle btn-like" data-testid="btn-like" aria-pressed="false">
+            <svg class="icon" aria-hidden="true"><use href="#i-heart"/></svg>
+            <span class="btn-label">Lubię</span>
+            <!-- Wspólny licznik polubień: pokazywany dopiero, gdy backend poda liczbę. -->
+            <span class="like-count" data-testid="like-count" hidden></span>
           </button>
         </div>
       </div>
@@ -214,15 +242,9 @@
     <section class="card card-summary card-ring" data-testid="ring-card" tabindex="-1">
       <div class="summary-inner">
         <p class="eyebrow ring-eyebrow"></p>
-        <div class="end-meter end-meter-sm" role="img">
-          <svg class="end-ring" viewBox="0 0 120 120" aria-hidden="true">
-            <circle class="end-ring-track" cx="60" cy="60" r="52"/>
-            <circle class="end-ring-value" cx="60" cy="60" r="52" pathLength="100"/>
-          </svg>
-          <p class="end-percent"><span class="end-percent-num"></span><span class="end-percent-sign">%</span></p>
-        </div>
+        <ul class="liked-strip" role="list" hidden></ul>
         <h2 class="ring-title"></h2>
-        <p class="ring-score"></p>
+        <p class="ring-line"></p>
         <button type="button" class="btn btn-primary ring-share" data-testid="ring-share">
           <svg class="icon" aria-hidden="true"><use href="#i-share"/></svg>
           <span>Udostępnij</span>
@@ -258,15 +280,10 @@
 
   <!-- Karta końcowa po ostatnim pierścieniu (10 km) -->
   <template id="end-template">
-    <section class="card card-summary card-end" data-testid="end-card" aria-label="Wynik" tabindex="-1">
+    <section class="card card-summary card-end" data-testid="end-card" aria-label="Podsumowanie" tabindex="-1">
       <div class="summary-inner">
-        <div class="end-meter" role="img">
-          <svg class="end-ring" viewBox="0 0 120 120" aria-hidden="true">
-            <circle class="end-ring-track" cx="60" cy="60" r="52"/>
-            <circle class="end-ring-value" cx="60" cy="60" r="52" pathLength="100"/>
-          </svg>
-          <p class="end-percent"><span class="end-percent-num"></span><span class="end-percent-sign">%</span></p>
-        </div>
+        <p class="eyebrow end-eyebrow"></p>
+        <ul class="liked-strip" role="list" hidden></ul>
         <h2 class="end-title"></h2>
         <p class="end-sub"></p>
         <div class="end-actions">
@@ -278,13 +295,34 @@
             <svg class="icon" aria-hidden="true"><use href="#i-back"/></svg>
             <span>Zmień miejsce</span>
           </button>
-          <button type="button" class="btn btn-secondary end-again">
+          <button type="button" class="btn btn-secondary end-restart" data-testid="end-restart">
             <svg class="icon" aria-hidden="true"><use href="#i-redo"/></svg>
-            <span>Jeszcze raz</span>
+            <span>Od nowa</span>
           </button>
         </div>
       </div>
     </section>
+  </template>
+
+  <!-- Wiersz panelu „Moje miejsca” -->
+  <template id="saved-row-template">
+    <li class="saved-row" data-testid="saved-row">
+      <div class="saved-main">
+        <h3 class="saved-title"></h3>
+        <p class="saved-distance"><svg class="icon" aria-hidden="true"><use href="#i-pin"/></svg><span class="saved-distance-text"></span></p>
+        <div class="card-links">
+          <a class="pill-link saved-read" target="_blank" rel="noopener noreferrer">
+            <svg class="icon" aria-hidden="true"><use href="#i-external"/></svg>
+            <span>Czytaj w Wikipedii</span>
+          </a>
+          <a class="pill-link saved-navigate" data-testid="saved-navigate" target="_blank" rel="noopener noreferrer">
+            <svg class="icon" aria-hidden="true"><use href="#i-route"/></svg>
+            <span>Nawiguj</span>
+          </a>
+        </div>
+      </div>
+      <button type="button" class="btn-text saved-remove" data-testid="saved-remove">Usuń</button>
+    </li>
   </template>
 
   <script src="app.js"></script>

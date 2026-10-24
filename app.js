@@ -1,4 +1,5 @@
-/* Wokół mnie — v0.1 „nieskończony feed”. Czysty JS (ES2020), bez zależności. */
+/* Wokół mnie — v0.2: losowy, nieskończony feed w pierścieniach, polubienia i zapisane miejsca.
+   Czysty JS (ES2020), bez zależności. */
 'use strict';
 
 const WIKI_BASE = 'https://pl.wikipedia.org';
@@ -8,13 +9,19 @@ const DEFAULT_RADIUS = 1000;
 const PREFETCH_AHEAD = 3;          // szczegóły pobierane dla bieżącej karty i 3 następnych
 const RENDER_AHEAD = 40;           // tyle kart renderujemy z wyprzedzeniem przed bieżącą (reszta czeka w stanie)
 const RING_LOOKAHEAD = 3;          // następny pierścień dociągamy, gdy do końca listy zostają ≤ 2 karty
-const SWIPE_THRESHOLD = 80;        // px przesunięcia poziomego, które liczy się jako odpowiedź
+const SWIPE_THRESHOLD = 80;        // px przesunięcia poziomego, które liczy się jako gest (w prawo: lubię, w lewo: dalej)
 const SWIPE_LOCK = 10;             // px, po których decydujemy: gest poziomy czy pionowy
-const ADVANCE_DELAY = 250;         // ms od odpowiedzi do przewinięcia na następną kartę
+const DOUBLE_TAP = 320;            // ms między dwoma stuknięciami w zdjęcie, które liczą się jako podwójne (= lubię)
+const BURST_DURATION = 700;        // ms widoczności serca po podwójnym stuknięciu / przesunięciu w prawo
+const SEEN_DELAY = 1500;           // ms na karcie, po których liczy się jako obejrzana
+const SEEN_LIMIT = 2000;           // tyle obejrzanych miejsc pamiętamy; najstarsze wypadają
 const FETCH_TIMEOUT = 12000;
 const MAX_AUTO_ATTEMPTS = 2;       // pobranie + jedna automatyczna ponowna próba; dalej tylko „Spróbuj ponownie”
 const STORAGE_RADIUS = 'wm.radius';
-const STORAGE_ANSWERS = 'wm.answers';
+const STORAGE_SEEN = 'wm.seen';               // [pageid, …] od najstarszego
+const STORAGE_LIKES = 'wm.likes';             // { pageid: timestamp }
+const STORAGE_SAVED = 'wm.saved';             // { pageid: timestamp }
+const STORAGE_SAVED_PLACES = 'wm.savedPlaces'; // { pageid: { title, lat, lon, url } } — dane do listy „Moje miejsca” między sesjami
 
 const state = {
   screen: 'start',   // start | loading | feed | empty | error
@@ -23,13 +30,18 @@ const state = {
   rings: [],         // [{ radius, index, status: 'loading'|'ready'|'error', places, isStart, error }] w kolejności ładowania
   ringIndex: -1,     // indeks w RADII ostatnio zamówionego pierścienia
   feedDone: false,   // true po ostatnim pierścieniu (10 km)
-  places: [],        // wszystkie załadowane miejsca w kolejności feedu (w obrębie pierścienia: kolejność z API)
-  items: [],         // elementy feedu: { type: 'place', place, ordinal, ring } | { type: 'ring', ring }
-  details: {},       // pageid -> { status: 'loading'|'ready'|'error', extract, image, thumb, url }
-  answers: {},       // pageid -> true|false dla załadowanych miejsc
+  places: [],        // wszystkie załadowane miejsca w kolejności feedu (w obrębie pierścienia: losowo, nieobejrzane najpierw)
+  items: [],         // elementy feedu: { type: 'place', place, ring } | { type: 'ring', ring }
+  details: {},       // pageid -> { status: 'loading'|'ready'|'error', extract, image, thumb, url, coords }
+  liked: {},         // pageid -> timestamp (lustro wm.likes)
+  saved: {},         // pageid -> timestamp (lustro wm.saved)
+  savedPlaces: {},   // pageid -> { title, lat, lon, url } (lustro wm.savedPlaces)
+  seen: [],          // pageid-y obejrzanych kart od najstarszego (lustro wm.seen)
   index: 0,          // indeks elementu feedu w widoku (items.length = karta ogona: ładowanie / koniec)
+  panelOpen: false,  // panel „Moje miejsca”
   error: null,
 };
+const seenSet = new Set();
 
 /* ---------- Drobne narzędzia ---------- */
 
@@ -46,6 +58,26 @@ function storageGet(key, fallback) {
 }
 function storageSet(key, value) {
   try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* tryb prywatny, brak miejsca — ignorujemy */ }
+}
+
+/* Losowość: podmienialna w testach (WM.rng.next = () => 0.9999 daje kolejność z API). */
+const rng = { next: Math.random };
+
+function shuffle(list) {
+  const a = list.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.min(i, Math.floor(rng.next() * (i + 1)));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+/* Kolejność w pierścieniu: nieobejrzane miejsca (losowo), potem obejrzane (też losowo). Świeże losowanie przy każdym ładowaniu. */
+function orderRing(places) {
+  const fresh = [];
+  const old = [];
+  places.forEach((p) => { (seenSet.has(p.pageid) ? old : fresh).push(p); });
+  return shuffle(fresh).concat(shuffle(old));
 }
 
 /* Odległość po polsku: do 1 km w metrach zaokrąglonych do 10 m, dalej w km z jedną cyfrą
@@ -69,7 +101,7 @@ function formatRange(from, to) {
   return `${formatRadius(from)}–${formatRadius(to)}`;
 }
 
-/* Liczba mnoga: 1 miejsce, 2 miejsca, 5 miejsc, 22 miejsca (mianownik) oraz „z 1 miejsca”, „z 5 miejsc” (dopełniacz). */
+/* Liczba mnoga: 1 miejsce, 2 miejsca, 5 miejsc, 22 miejsca. */
 function pluralPlaces(n) {
   const n10 = n % 10;
   const n100 = n % 100;
@@ -77,8 +109,15 @@ function pluralPlaces(n) {
   if (n10 >= 2 && n10 <= 4 && !(n100 >= 12 && n100 <= 14)) return 'miejsca';
   return 'miejsc';
 }
-function placesGenitive(n) {
-  return n === 1 ? 'miejsca' : 'miejsc';
+
+/* Odległość między dwoma punktami (haversine), w metrach. */
+function haversine(a, b) {
+  const R = 6371000;
+  const rad = (x) => (x * Math.PI) / 180;
+  const dLat = rad(b.lat - a.lat);
+  const dLon = rad(b.lon - a.lon);
+  const s = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(s));
 }
 
 /* Skróty, po których kropka nie kończy zdania (porównywane małymi literami, bez końcowej kropki).
@@ -131,6 +170,10 @@ function hueFromTitle(title) {
   return h % 360;
 }
 
+function initialOf(title) {
+  return String(title).trim().charAt(0).toUpperCase();
+}
+
 /* Miniaturka z REST ma ~320 px; dla pełnoekranowej karty podmieniamy rozmiar w URL-u Commons
    (…/thumb/…/320px-Plik.jpg → 1000px), chyba że oryginał jest mniejszy — wtedy bierzemy oryginał. */
 function pickImage(thumbnail, original) {
@@ -146,7 +189,11 @@ function encodeTitle(title) {
   return encodeURIComponent(String(title).replace(/ /g, '_'));
 }
 
-/* Trasa pieszą do miejsca w Mapach Google; współrzędne z kropką dziesiętną, 5 miejsc (~1 m). */
+function wikiUrl(title) {
+  return `${WIKI_BASE}/wiki/${encodeTitle(title)}`;
+}
+
+/* Trasa piesza do miejsca w Mapach Google; współrzędne z kropką dziesiętną, 5 miejsc (~1 m). */
 function navigateUrl(lat, lon) {
   return `https://www.google.com/maps/dir/?api=1&destination=${Number(lat).toFixed(5)},${Number(lon).toFixed(5)}&travelmode=walking`;
 }
@@ -211,7 +258,7 @@ async function geosearch(lat, lon, radiusM, limit = 100) {
 }
 
 async function fetchDetails(place) {
-  const fallbackUrl = `${WIKI_BASE}/wiki/${encodeTitle(place.title)}`;
+  const fallbackUrl = wikiUrl(place.title);
   try {
     const s = await fetchJson(`${WIKI_BASE}/api/rest_v1/page/summary/${encodeTitle(place.title)}`);
     return {
@@ -269,6 +316,97 @@ async function searchPlace(query) {
   return null;
 }
 
+/* ---------- Pamięć: obejrzane, polubione, zapisane ---------- */
+
+function sanitizeMap(raw) {
+  const out = {};
+  if (raw && typeof raw === 'object') {
+    Object.keys(raw).forEach((k) => { if (Number(k) > 0 && typeof raw[k] === 'number') out[Number(k)] = raw[k]; });
+  }
+  return out;
+}
+
+function loadPersisted() {
+  state.liked = sanitizeMap(storageGet(STORAGE_LIKES, {}));
+  state.saved = sanitizeMap(storageGet(STORAGE_SAVED, {}));
+  const rawPlaces = storageGet(STORAGE_SAVED_PLACES, {});
+  state.savedPlaces = rawPlaces && typeof rawPlaces === 'object' ? rawPlaces : {};
+  const rawSeen = storageGet(STORAGE_SEEN, []);
+  state.seen = (Array.isArray(rawSeen) ? rawSeen : []).map(Number).filter((id) => id > 0).slice(-SEEN_LIMIT);
+  seenSet.clear();
+  state.seen.forEach((id) => seenSet.add(id));
+}
+
+/* Karta obejrzana: była aktywna ≥ SEEN_DELAY. Ponowne obejrzenie przesuwa wpis na koniec (najstarsze wypadają pierwsze). */
+function markSeen(pageid) {
+  const id = Number(pageid);
+  if (!(id > 0)) return false;
+  if (seenSet.has(id)) {
+    const at = state.seen.indexOf(id);
+    if (at >= 0) state.seen.splice(at, 1);
+  }
+  state.seen.push(id);
+  seenSet.add(id);
+  while (state.seen.length > SEEN_LIMIT) seenSet.delete(state.seen.shift());
+  storageSet(STORAGE_SEEN, state.seen);
+  return true;
+}
+
+function clearSeen() {
+  state.seen = [];
+  seenSet.clear();
+  storageSet(STORAGE_SEEN, []);
+}
+
+/* Polubienia: dziś tylko lokalne. Wspólny licznik (backend) wepnie się przez counts(); karta ma już ukryty .like-count. */
+const likes = {
+  isLiked(pageid) { return Boolean(state.liked[Number(pageid)]); },
+  toggle(pageid) {
+    const id = Number(pageid);
+    const on = !state.liked[id];
+    if (on) state.liked[id] = Date.now(); else delete state.liked[id];
+    storageSet(STORAGE_LIKES, state.liked);
+    return on;
+  },
+  /* Liczba polubień innych użytkowników dla podanych stron: Map<pageid, number>. Bez backendu — pusta mapa. */
+  async counts(pageids) {
+    void pageids;
+    return new Map();
+  },
+};
+
+/* Zapisane miejsca („Moje miejsca”): mapa pageid → czas zapisania plus dane potrzebne liście (tytuł, współrzędne, link). */
+const saved = {
+  isSaved(pageid) { return Boolean(state.saved[Number(pageid)]); },
+  add(pageid, info) {
+    const id = Number(pageid);
+    state.saved[id] = Date.now();
+    state.savedPlaces[id] = { title: info.title, lat: info.lat, lon: info.lon, url: info.url };
+    storageSet(STORAGE_SAVED, state.saved);
+    storageSet(STORAGE_SAVED_PLACES, state.savedPlaces);
+  },
+  remove(pageid) {
+    const id = Number(pageid);
+    delete state.saved[id];
+    delete state.savedPlaces[id];
+    storageSet(STORAGE_SAVED, state.saved);
+    storageSet(STORAGE_SAVED_PLACES, state.savedPlaces);
+  },
+  count() { return Object.keys(state.saved).length; },
+  /* Od najnowszego; dane z savedPlaces, a gdy ich brak (stary zapis) — z bieżącego feedu. */
+  list() {
+    return Object.keys(state.saved).map((key) => {
+      const id = Number(key);
+      const meta = state.savedPlaces[id] || {};
+      const inFeed = state.places.find((p) => p.pageid === id);
+      const title = meta.title || (inFeed && inFeed.title) || `Strona ${id}`;
+      const lat = typeof meta.lat === 'number' ? meta.lat : (inFeed ? inFeed.lat : null);
+      const lon = typeof meta.lon === 'number' ? meta.lon : (inFeed ? inFeed.lon : null);
+      return { pageid: id, ts: state.saved[id], title, lat, lon, url: meta.url || wikiUrl(title) };
+    }).sort((a, b) => b.ts - a.ts);
+  },
+};
+
 /* ---------- Elementy DOM ---------- */
 
 const els = {};
@@ -283,12 +421,18 @@ const cardsById = new Map();
 let renderedCount = 0;       // ile elementów feedu (items) ma już kartę w DOM
 let tailEl = null;           // karta ogona: ładowanie pierścienia / błąd pierścienia / karta końcowa
 let tailKind = null;         // 'loading' | 'error' | 'end' | null
+let seenTimer = 0;
+let seenCandidate = null;
+let panelReturnFocus = null;
+const burstTimers = new WeakMap();
+const likeCountCache = new Map();
 
 function cacheElements() {
-  ['app', 'start-screen', 'around-screen', 'topbar', 'progress', 'change-place', 'loading-state', 'empty-state',
-    'empty-text', 'error-state', 'error-text', 'retry-button', 'feed', 'start-button', 'geo-message', 'place-toggle',
-    'place-form', 'place-input', 'place-submit', 'place-message', 'start-chips-slot', 'bar-chips-slot',
-    'empty-chips-slot', 'toast', 'card-template', 'ring-template', 'tail-template', 'end-template'].forEach((id) => { els[id] = $(id); });
+  ['app', 'start-screen', 'around-screen', 'topbar', 'my-places', 'my-places-count', 'change-place', 'loading-state',
+    'empty-state', 'empty-text', 'error-state', 'error-text', 'retry-button', 'feed', 'start-button', 'geo-message',
+    'place-toggle', 'place-form', 'place-input', 'place-submit', 'place-message', 'start-chips-slot', 'bar-chips-slot',
+    'empty-chips-slot', 'toast', 'my-places-panel', 'panel-close', 'panel-empty', 'panel-list', 'card-template',
+    'ring-template', 'tail-template', 'end-template', 'saved-row-template'].forEach((id) => { els[id] = $(id); });
 }
 
 /* ---------- Chipsy promienia (pierścień startowy) ---------- */
@@ -374,19 +518,22 @@ function render() {
   if (s === 'error') {
     els['error-text'].textContent = state.error || describeError(null);
   }
-  if (s !== 'feed') els.progress.textContent = '';
   if (s === 'start') {
     clearFeed();
     const btn = els['start-button'];
     btn.disabled = false;
     btn.querySelector('span').textContent = 'Pokaż, co jest wokół';
   }
+  updateSavedBadge();
 }
 
 function clearFeed() {
   if (observer) { observer.disconnect(); observer = null; }
+  window.clearTimeout(seenTimer);
+  seenCandidate = null;
   cardsById.clear();
   els.feed.replaceChildren();
+  els.feed.scrollTop = 0;   // ukryty feed pamięta ostatnie przewinięcie (Chromium) — po przebudowie zaczynamy od góry
   els.feed.removeAttribute('aria-busy');
   renderedCount = 0;
   tailEl = null;
@@ -395,8 +542,8 @@ function clearFeed() {
 
 /* ---------- Ładowanie: pierścienie ----------
    Pierścień = jedno zapytanie geosearch dla promienia z RADII. Pierwszy to chip użytkownika; każdy następny
-   dociągamy automatycznie, gdy do końca załadowanego feedu zostają ≤ 2 karty albo gdy użytkownik odpowie na
-   ostatnią załadowaną kartę. Z odpowiedzi odpada to, co już jest w feedzie (po pageid), kolejność z API zostaje. */
+   dociągamy automatycznie, gdy do końca załadowanego feedu zostają ≤ 2 karty. Z odpowiedzi odpada to, co już jest
+   w feedzie (po pageid); reszta trafia do feedu w losowej kolejności: najpierw miejsca jeszcze nieobejrzane. */
 
 async function loadAround(lat, lon, radiusM = state.radius, label = null) {
   const radius = RADII.includes(radiusM) ? radiusM : state.radius;
@@ -413,8 +560,7 @@ async function loadAround(lat, lon, radiusM = state.radius, label = null) {
   state.ringIndex = RADII.indexOf(radius) - 1;
   state.feedDone = false;
   state.places = [];
-  state.items = [];
-  state.answers = {};   // state.details zostaje: ta sama strona nie jest pobierana ponownie po zmianie promienia
+  state.items = [];      // state.details zostaje: ta sama strona nie jest pobierana ponownie po zmianie promienia
   state.index = 0;
   state.error = null;
   clearFeed();
@@ -447,8 +593,8 @@ async function loadNextRing() {
   try {
     const list = await geosearch(state.center.lat, state.center.lon, radius, radius >= 3000 ? 500 : 100);
     if (token !== loadToken) return;   // w międzyczasie ruszyło nowe ładowanie
-    const seen = new Set(state.places.map((p) => p.pageid));
-    ring.places = list.filter((p) => !seen.has(p.pageid));
+    const inFeed = new Set(state.places.map((p) => p.pageid));
+    ring.places = orderRing(list.filter((p) => !inFeed.has(p.pageid)));
     ring.status = 'ready';
     onRingLoaded(ring);
   } catch (err) {
@@ -465,10 +611,9 @@ function onRingLoaded(ring) {
   const wasAtTail = state.screen === 'feed' && state.index >= state.items.length;
   const firstNewItem = state.items.length;
 
-  Object.assign(state.answers, restoreAnswers(ring.places));
   ring.places.forEach((p) => {
     state.places.push(p);
-    state.items.push({ type: 'place', place: p, ordinal: state.places.length, ring });
+    state.items.push({ type: 'place', place: p, ring });
   });
   // Karta pierścienia po jego miejscach; po ostatnim pierścieniu zamiast niej jest karta końcowa.
   // Pusty pierścień startowy dostaje kartę „nic nie ma”, pusty dalszy pierścień — żadnej (jedziemy dalej).
@@ -482,22 +627,15 @@ function onRingLoaded(ring) {
     renderAround(state.index);
     renderTail();
     updateTailCard();
-    updateRingCards();
-    updateProgress();
+    updateSummaryCards();
     if (wasAtTail && ring.places.length) {
-      // Użytkownik czekał na karcie ładowania: nowe karty wchodzą w to samo miejsce (overflow-anchor: none);
-      // gdy pierwsze z nich mają już odpowiedź z poprzedniej sesji, przeskakujemy do pierwszej bez odpowiedzi.
-      let target = firstNewItem;
-      for (let i = firstNewItem; i < state.items.length; i++) {
-        const it = state.items[i];
-        if (it.type === 'place' && typeof state.answers[it.place.pageid] !== 'boolean') { target = i; break; }
-      }
-      renderUpTo(target + 1);
-      const el = els.feed.children[target];
+      // Użytkownik czekał na karcie ładowania: nowe karty wchodzą w to samo miejsce (overflow-anchor: none).
+      renderUpTo(firstNewItem + 1);
+      const el = els.feed.children[firstNewItem];
       if (el) els.feed.scrollTo({ top: el.offsetTop, behavior: 'auto' });
-      state.index = target;
-      updateProgress();
-      prefetch(target);
+      state.index = firstNewItem;
+      prefetch(firstNewItem);
+      scheduleSeen(state.items[firstNewItem]);
     }
   }
 
@@ -510,9 +648,7 @@ function finishFeed() {
   state.feedDone = true;
   if (!state.places.length) { state.screen = 'empty'; render(); return; }
   renderTail();
-  updateRingCards();
-  updateEndCard();
-  updateProgress();
+  updateSummaryCards();
 }
 
 function maybeLoadNextRing() {
@@ -528,36 +664,17 @@ function retryRing() {
   loadNextRing();
 }
 
-function restoreAnswers(places) {
-  const stored = storageGet(STORAGE_ANSWERS, {});
-  const answers = {};
-  if (stored && typeof stored === 'object') {
-    places.forEach((p) => { if (typeof stored[p.pageid] === 'boolean') answers[p.pageid] = stored[p.pageid]; });
-  }
-  return answers;
-}
-
 /* ---------- Feed ---------- */
 
 function buildFeed() {
   clearFeed();
   observer = new IntersectionObserver(onIntersect, { root: els.feed, threshold: 0.6 });
-  // Odpowiedzi zapamiętane z poprzedniej sesji: karty już oznaczone, start od pierwszej bez odpowiedzi.
-  let firstOpen = -1;
-  state.items.forEach((it, i) => {
-    if (firstOpen < 0 && it.type === 'place' && typeof state.answers[it.place.pageid] !== 'boolean') firstOpen = i;
-  });
-  // Wszystko odpowiedziane → ostatni element (karta pierścienia / „nic nie ma”), pod nim ładuje się następny pierścień.
-  const startIndex = firstOpen >= 0 ? firstOpen : Math.max(0, state.items.length - 1);
-  state.index = startIndex;
-  renderAround(startIndex);
+  state.index = 0;
+  renderAround(0);
   renderTail();
-  updateProgress();
-  if (firstOpen >= 0) prefetch(firstOpen);
-  if (startIndex > 0) {
-    const target = els.feed.children[startIndex];
-    if (target) els.feed.scrollTo({ top: target.offsetTop, behavior: 'auto' });
-  }
+  els.feed.scrollTop = 0;
+  prefetch(0);
+  scheduleSeen(state.items[0]);
   maybeLoadNextRing();
 }
 
@@ -565,11 +682,23 @@ function onIntersect(entries) {
   entries.forEach((entry) => {
     if (!entry.isIntersecting) return;
     state.index = Number(entry.target.dataset.index);
-    updateProgress();
+    scheduleSeen(state.items[state.index]);
     prefetch(state.index);
     renderAround(state.index);
     maybeLoadNextRing();
   });
+}
+
+/* Karta aktywna przez SEEN_DELAY → obejrzana; szybkie przewinięcie się nie liczy. */
+function scheduleSeen(item) {
+  window.clearTimeout(seenTimer);
+  seenCandidate = null;
+  if (!item || item.type !== 'place' || seenSet.has(item.place.pageid)) return;
+  seenCandidate = item.place.pageid;
+  seenTimer = window.setTimeout(() => {
+    if (state.screen === 'feed' && seenCandidate) markSeen(seenCandidate);
+    seenCandidate = null;
+  }, SEEN_DELAY);
 }
 
 /* Renderowanie przyrostowe: karty powstają partiami, maks. RENDER_AHEAD przed bieżącą. */
@@ -588,7 +717,6 @@ function renderUpTo(limit) {
     if (item.type === 'place') {
       el = createCard(item.place, i);
       cardsById.set(item.place.pageid, el);
-      if (typeof state.answers[item.place.pageid] === 'boolean') markCard(el, state.answers[item.place.pageid]);
       if (state.details[item.place.pageid]) applyDetails(item.place.pageid);
     } else {
       el = createRingCard(item.ring, i);
@@ -660,6 +788,8 @@ function updateTailCard() {
   tailEl.querySelector('.tail-error-text').textContent = isError ? (ring.error || '') : '';
 }
 
+/* ---------- Karta miejsca ---------- */
+
 function createCard(place, index) {
   const card = els['card-template'].content.firstElementChild.cloneNode(true);
   card.dataset.index = String(index);
@@ -668,44 +798,237 @@ function createCard(place, index) {
 
   const hue = hueFromTitle(place.title);
   card.querySelector('.card-placeholder').style.setProperty('--ph', `hsl(${hue} 34% 26%)`);
-  card.querySelector('.card-letter').textContent = String(place.title).trim().charAt(0).toUpperCase();
+  card.querySelector('.card-letter').textContent = initialOf(place.title);
   card.querySelector('.card-distance-text').textContent = formatDistance(place.dist);
   card.querySelector('.card-title').textContent = place.title;
   card.querySelector('.card-extract').classList.add('is-skeleton');
   const link = card.querySelector('.card-link');
-  link.href = `${WIKI_BASE}/wiki/${encodeTitle(place.title)}`;
+  link.href = wikiUrl(place.title);
   link.setAttribute('aria-label', `Czytaj w Wikipedii: ${place.title}`);
   const nav = card.querySelector('.card-navigate');
   nav.href = navigateUrl(place.lat, place.lon);   // geosearch zawsze podaje lat/lon; REST może je później doprecyzować
   nav.setAttribute('aria-label', `Nawiguj do: ${place.title}`);
 
-  card.querySelectorAll('.btn-answer').forEach((btn) => {
-    btn.addEventListener('click', () => answer(place.pageid, btn.dataset.known === 'true'));
-  });
+  card.querySelector('.btn-like').addEventListener('click', () => toggleLike(place.pageid));
+  card.querySelector('.btn-save').addEventListener('click', () => toggleSave(place.pageid));
   card.querySelector('.card-retry').addEventListener('click', () => ensureDetails(place, { force: true }));
-  attachSwipe(card, place.pageid);
+  applyToggles(card, place.pageid);
+  if (likeCountCache.has(place.pageid)) renderLikeCount(place.pageid, likeCountCache.get(place.pageid));
+  attachGestures(card, place.pageid);
   return card;
 }
 
-/* Karta pierścienia: podsumowanie promienia i zapowiedź następnego. */
+/* Stan przycisków „Zapisz” / „Lubię” na karcie (aria-pressed + etykieta + wypełniona ikona przez CSS). */
+function applyToggles(card, pageid) {
+  const liked = likes.isLiked(pageid);
+  const isSaved = saved.isSaved(pageid);
+  const likeBtn = card.querySelector('.btn-like');
+  likeBtn.setAttribute('aria-pressed', liked ? 'true' : 'false');
+  likeBtn.querySelector('.btn-label').textContent = liked ? 'Lubisz' : 'Lubię';
+  const saveBtn = card.querySelector('.btn-save');
+  saveBtn.setAttribute('aria-pressed', isSaved ? 'true' : 'false');
+  saveBtn.querySelector('.btn-label').textContent = isSaved ? 'Zapisane' : 'Zapisz';
+  card.classList.toggle('is-liked', liked);
+  card.classList.toggle('is-saved', isSaved);
+}
+
+/* Wspólny licznik polubień (gdy kiedyś będzie): pokazujemy tylko znane wartości. */
+function formatCount(n) {
+  if (n < 1000) return String(n);
+  return `${(n / 1000).toFixed(1).replace('.', ',')} tys.`;
+}
+function renderLikeCount(pageid, n) {
+  if (typeof n !== 'number' || !Number.isFinite(n)) return;
+  likeCountCache.set(Number(pageid), n);
+  const card = cardsById.get(Number(pageid));
+  if (!card) return;
+  const el = card.querySelector('.like-count');
+  el.textContent = formatCount(n);
+  el.hidden = false;
+}
+function requestLikeCounts(pageids) {
+  const missing = pageids.filter((id) => !likeCountCache.has(id));
+  if (!missing.length) return;
+  likes.counts(missing).then((map) => { if (map && typeof map.forEach === 'function') map.forEach((n, id) => renderLikeCount(id, n)); }).catch(() => {});
+}
+
+/* Serce na całą kartę: po podwójnym stuknięciu i przesunięciu w prawo. */
+function burstHeart(card) {
+  card.classList.remove('is-burst');
+  void card.offsetWidth;   // restart animacji
+  card.classList.add('is-burst');
+  window.clearTimeout(burstTimers.get(card));
+  burstTimers.set(card, window.setTimeout(() => card.classList.remove('is-burst'), BURST_DURATION));
+}
+
+/* ---------- Polubienia i zapisywanie ---------- */
+
+function toggleLike(pageid) {
+  const id = Number(pageid);
+  const on = likes.toggle(id);
+  syncLikeUi(id);
+  return on;
+}
+
+/* Gest (podwójne stuknięcie, przesunięcie w prawo): zawsze „lubię”, nigdy nie cofa polubienia. */
+function likeFromGesture(pageid, card) {
+  const id = Number(pageid);
+  if (!likes.isLiked(id)) { likes.toggle(id); syncLikeUi(id); }
+  if (card) burstHeart(card);
+}
+
+function syncLikeUi(pageid) {
+  const card = cardsById.get(Number(pageid));
+  if (card) applyToggles(card, Number(pageid));
+  updateSummaryCards();
+}
+
+function placeInfo(id) {
+  const place = state.places.find((p) => p.pageid === id);
+  if (!place) return null;
+  const d = state.details[id];
+  const ready = d && d.status === 'ready';
+  const coords = ready && d.coords ? d.coords : { lat: place.lat, lon: place.lon };
+  return { title: place.title, lat: coords.lat, lon: coords.lon, url: ready && d.url ? d.url : wikiUrl(place.title) };
+}
+
+function toggleSave(pageid) {
+  const id = Number(pageid);
+  if (saved.isSaved(id)) {
+    saved.remove(id);
+  } else {
+    const info = placeInfo(id);
+    if (!info) return false;
+    saved.add(id, info);
+  }
+  syncSaveUi(id);
+  return saved.isSaved(id);
+}
+
+function syncSaveUi(pageid) {
+  const card = cardsById.get(Number(pageid));
+  if (card) applyToggles(card, Number(pageid));
+  updateSavedBadge();
+  updateSummaryCards();
+  if (state.panelOpen) renderPanel();
+}
+
+function updateSavedBadge() {
+  if (!els['my-places']) return;
+  const n = saved.count();
+  const badge = els['my-places-count'];
+  badge.textContent = String(n);
+  badge.hidden = n === 0;
+  els['my-places'].setAttribute('aria-label', n ? `Moje miejsca, zapisanych: ${n}` : 'Moje miejsca');
+}
+
+/* ---------- Panel „Moje miejsca” ---------- */
+
+function openPanel() {
+  if (state.panelOpen) return;
+  state.panelOpen = true;
+  panelReturnFocus = document.activeElement;
+  renderPanel();
+  els['my-places-panel'].hidden = false;
+  els['my-places'].setAttribute('aria-expanded', 'true');
+  els['panel-close'].focus();
+}
+
+function closePanel() {
+  if (!state.panelOpen) return;
+  state.panelOpen = false;
+  els['my-places-panel'].hidden = true;
+  els['my-places'].setAttribute('aria-expanded', 'false');
+  const back = panelReturnFocus;
+  panelReturnFocus = null;
+  if (back && typeof back.focus === 'function' && document.contains(back) && !back.hidden) back.focus();
+  else els['my-places'].focus();
+}
+
+function renderPanel() {
+  const list = saved.list();
+  els['panel-empty'].hidden = list.length > 0;
+  els['panel-list'].replaceChildren(...list.map(createSavedRow));
+}
+
+function createSavedRow(entry) {
+  const row = els['saved-row-template'].content.firstElementChild.cloneNode(true);
+  row.dataset.pageid = String(entry.pageid);
+  row.querySelector('.saved-title').textContent = entry.title;
+  const hasCoords = typeof entry.lat === 'number' && typeof entry.lon === 'number';
+  const dist = row.querySelector('.saved-distance');
+  if (hasCoords && state.center) {
+    dist.hidden = false;
+    dist.querySelector('.saved-distance-text').textContent = formatDistance(haversine(state.center, entry));
+  } else {
+    dist.hidden = true;
+  }
+  const read = row.querySelector('.saved-read');
+  read.href = entry.url;
+  read.setAttribute('aria-label', `Czytaj w Wikipedii: ${entry.title}`);
+  const nav = row.querySelector('.saved-navigate');
+  if (hasCoords) {
+    nav.href = navigateUrl(entry.lat, entry.lon);
+    nav.setAttribute('aria-label', `Nawiguj do: ${entry.title}`);
+  } else {
+    nav.hidden = true;
+  }
+  const remove = row.querySelector('.saved-remove');
+  remove.setAttribute('aria-label', `Usuń: ${entry.title}`);
+  remove.addEventListener('click', () => {
+    const rows = [...els['panel-list'].children];
+    const at = rows.indexOf(row);
+    toggleSave(entry.pageid);
+    // Fokus zostaje w panelu: na następnym „Usuń”, a gdy lista się skończyła — na przycisku zamknięcia.
+    const next = els['panel-list'].children[Math.min(at, els['panel-list'].children.length - 1)];
+    (next ? next.querySelector('.saved-remove') : els['panel-close']).focus();
+  });
+  return row;
+}
+
+function focusablesIn(root) {
+  return [...root.querySelectorAll('a[href], button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])')]
+    .filter((el) => !el.hidden && !el.closest('[hidden]') && el.offsetParent !== null);
+}
+
+/* Escape zamyka; Tab krąży po panelu (prosta pułapka fokusu). */
+function onPanelKeydown(e) {
+  if (!state.panelOpen) return;
+  if (e.key === 'Escape') { e.preventDefault(); closePanel(); return; }
+  if (e.key !== 'Tab') return;
+  const items = focusablesIn(els['my-places-panel']);
+  if (!items.length) { e.preventDefault(); return; }
+  const first = items[0];
+  const last = items[items.length - 1];
+  const active = document.activeElement;
+  const inside = els['my-places-panel'].contains(active);
+  if (e.shiftKey && (active === first || !inside)) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && (active === last || !inside)) { e.preventDefault(); first.focus(); }
+}
+
+/* ---------- Karty podsumowań: pierścień i koniec ---------- */
+
 function createRingCard(ring, index) {
   const el = els['ring-template'].content.firstElementChild.cloneNode(true);
   el.dataset.index = String(index);
   el.dataset.radius = String(ring.radius);
-  el.querySelector('.ring-share').addEventListener('click', () => share(shareTextFor(ring.radius, ringStats(ring).pct)));
+  el.querySelector('.ring-share').addEventListener('click', () => share(shareTextFor(ring.radius, ring.places)));
   updateRingCard(el, ring);
   return el;
 }
 
-function ringStats(ring) {
-  const total = ring.places.length;
-  let known = 0;
-  let answered = 0;
-  ring.places.forEach((p) => {
-    const a = state.answers[p.pageid];
-    if (typeof a === 'boolean') { answered += 1; if (a) known += 1; }
+/* „Przejrzałeś 16 miejsc, polubiłeś 3, zapisałeś 2” (część o zapisanych tylko, gdy coś zapisano). */
+function reviewStats(places) {
+  let liked = 0;
+  let savedCount = 0;
+  places.forEach((p) => {
+    if (likes.isLiked(p.pageid)) liked += 1;
+    if (saved.isSaved(p.pageid)) savedCount += 1;
   });
-  return { total, known, answered, pct: total ? Math.round((known / total) * 100) : 0 };
+  const n = places.length;
+  let text = `Przejrzałeś ${n} ${pluralPlaces(n)}, polubiłeś ${liked}`;
+  if (savedCount) text += `, zapisałeś ${savedCount}`;
+  return { n, liked, saved: savedCount, text };
 }
 
 /* Promień następnego pierścienia, który coś wnosi (albo dopiero się ładuje / czeka w kolejce). */
@@ -717,32 +1040,53 @@ function nextRadiusAfter(ring) {
   return RADII[state.ringIndex + 1] || null;
 }
 
+/* Pasek do 3 ostatnio polubionych miejsc: miniatura z REST albo placeholder z pierwszą literą. */
+function renderLikedStrip(el, places) {
+  const strip = el.querySelector('.liked-strip');
+  const likedPlaces = places.filter((p) => likes.isLiked(p.pageid))
+    .sort((a, b) => (state.liked[b.pageid] || 0) - (state.liked[a.pageid] || 0))
+    .slice(0, 3);
+  strip.replaceChildren();
+  strip.hidden = likedPlaces.length === 0;
+  if (!likedPlaces.length) return;
+  likedPlaces.forEach((p) => {
+    const li = document.createElement('li');
+    li.className = 'liked-thumb';
+    li.title = p.title;
+    const d = state.details[p.pageid];
+    const src = d && d.status === 'ready' ? (d.thumb || d.image) : null;
+    if (src) {
+      const img = document.createElement('img');
+      img.alt = '';
+      img.decoding = 'async';
+      img.src = src;
+      img.addEventListener('error', () => { img.remove(); li.textContent = initialOf(p.title); }, { once: true });
+      li.appendChild(img);
+    } else {
+      li.style.setProperty('--ph', `hsl(${hueFromTitle(p.title)} 34% 30%)`);
+      li.textContent = initialOf(p.title);
+    }
+    strip.appendChild(li);
+  });
+  strip.setAttribute('aria-label', `Polubione: ${likedPlaces.map((p) => p.title).join(', ')}`);
+}
+
 function updateRingCard(el, ring) {
-  const { total, known, answered, pct } = ringStats(ring);
   const radiusText = formatRadius(ring.radius);
   const title = el.querySelector('.ring-title');
-  const score = el.querySelector('.ring-score');
-  const meter = el.querySelector('.end-meter');
+  const line = el.querySelector('.ring-line');
   const shareBtn = el.querySelector('.ring-share');
   el.querySelector('.ring-eyebrow').textContent = `Promień ${radiusText}`;
-  if (total === 0) {
+  if (ring.places.length === 0) {
     title.textContent = `W promieniu ${radiusText} nic nie ma`;
-    score.textContent = 'Wikipedia nie zna tu żadnego miejsca — szukam dalej.';
-    meter.hidden = true;
+    line.textContent = 'Wikipedia nie zna tu żadnego miejsca — szukam dalej.';
     shareBtn.hidden = true;
-  } else if (answered === 0) {
-    title.textContent = `To wszystko w promieniu ${radiusText}`;
-    score.textContent = `Przewinąłeś ${total} ${pluralPlaces(total)} w promieniu ${radiusText}`;
-    meter.hidden = true;
-    shareBtn.hidden = true;
+    el.querySelector('.liked-strip').hidden = true;
   } else {
     title.textContent = `To wszystko w promieniu ${radiusText}`;
-    score.textContent = `Znasz ${pct}% (${known} z ${total} ${placesGenitive(total)})`;
-    meter.hidden = false;
+    line.textContent = reviewStats(ring.places).text;
     shareBtn.hidden = false;
-    el.querySelector('.end-percent-num').textContent = String(pct);
-    el.querySelector('.end-ring-value').style.setProperty('--pct', String(pct));
-    meter.setAttribute('aria-label', `Znasz ${pct}% miejsc w promieniu ${radiusText}`);
+    renderLikedStrip(el, ring.places);
   }
   el.setAttribute('aria-label', title.textContent);
   const next = nextRadiusAfter(ring);
@@ -760,63 +1104,45 @@ function updateRingCards() {
 
 function createEndCard() {
   const end = els['end-template'].content.firstElementChild.cloneNode(true);
-  end.querySelector('[data-testid="share-button"]').addEventListener('click', () => share(shareTextFor(RADII[RADII.length - 1], overallPct())));
+  end.querySelector('[data-testid="share-button"]').addEventListener('click', () => share(shareTextFor(RADII[RADII.length - 1], state.places)));
   end.querySelector('.end-change').addEventListener('click', changePlace);
-  end.querySelector('.end-again').addEventListener('click', resetAnswers);
+  end.querySelector('.end-restart').addEventListener('click', restart);
   return end;
-}
-
-function knownCount() {
-  return state.places.reduce((n, p) => n + (state.answers[p.pageid] === true ? 1 : 0), 0);
-}
-function answeredCount() {
-  return state.places.reduce((n, p) => n + (typeof state.answers[p.pageid] === 'boolean' ? 1 : 0), 0);
-}
-function overallPct() {
-  const total = state.places.length;
-  return total ? Math.round((knownCount() / total) * 100) : 0;
-}
-
-/* „3 z 24 · znasz 2”: numer bieżącej karty miejsca i liczba załadowanych miejsc (karty pierścieni nie liczą się). */
-function updateProgress() {
-  const total = state.places.length;
-  if (!total || state.screen !== 'feed') { els.progress.textContent = ''; return; }
-  const item = state.items[state.index];
-  let ordinal = total;
-  if (item && item.type === 'place') ordinal = item.ordinal;
-  else if (item) {
-    ordinal = 0;
-    for (let i = state.index - 1; i >= 0; i--) {
-      if (state.items[i].type === 'place') { ordinal = state.items[i].ordinal; break; }
-    }
-    ordinal = Math.max(1, ordinal);
-  }
-  els.progress.textContent = `${Math.min(ordinal, total)} z ${total} · znasz ${knownCount()}`;
 }
 
 function updateEndCard() {
   if (!tailEl || tailKind !== 'end') return;
-  const total = state.places.length;
-  const known = knownCount();
-  const pct = overallPct();
   const maxText = formatRadius(RADII[RADII.length - 1]);
-  tailEl.querySelector('.end-percent-num').textContent = String(pct);
-  tailEl.querySelector('.end-ring-value').style.setProperty('--pct', String(pct));
-  tailEl.querySelector('.end-meter').setAttribute('aria-label', `Znasz ${pct}% okolicy`);
+  tailEl.querySelector('.end-eyebrow').textContent = `Promień ${maxText}`;
   tailEl.querySelector('.end-title').textContent = `To wszystko, co Wikipedia zna w promieniu ${maxText}`;
-  tailEl.querySelector('.end-sub').textContent = `Znasz ${pct}% (${known} z ${total} ${placesGenitive(total)})`;
-  tailEl.querySelector('.end-again').hidden = answeredCount() === 0;
+  tailEl.querySelector('.end-sub').textContent = reviewStats(state.places).text;
+  renderLikedStrip(tailEl, state.places);
 }
+
+function updateSummaryCards() {
+  if (state.screen !== 'feed') return;
+  updateRingCards();
+  updateEndCard();
+}
+
+/* „Od nowa”: zapomina, co było obejrzane (polubienia i zapisane zostają) i losuje feed od pierścienia startowego. */
+function restart() {
+  clearSeen();
+  if (state.center) loadAround(state.center.lat, state.center.lon, state.radius, state.center.label);
+}
+
+/* ---------- Szczegóły kart ---------- */
 
 /* Pobieranie szczegółów: leniwie, dla bieżącej karty i PREFETCH_AHEAD następnych kart miejsc. */
 function prefetch(fromItem) {
-  let count = 0;
-  for (let i = Math.max(0, fromItem); i < state.items.length && count <= PREFETCH_AHEAD; i++) {
+  const ids = [];
+  for (let i = Math.max(0, fromItem); i < state.items.length && ids.length <= PREFETCH_AHEAD; i++) {
     const it = state.items[i];
     if (it.type !== 'place') continue;
     ensureDetails(it.place);
-    count += 1;
+    ids.push(it.place.pageid);
   }
+  requestLikeCounts(ids);
 }
 
 async function ensureDetails(place, { force = false } = {}) {
@@ -861,6 +1187,7 @@ function applyDetails(pageid) {
   if (d.url) link.href = d.url;
   if (d.coords) card.querySelector('.card-navigate').href = navigateUrl(d.coords.lat, d.coords.lon);
   if (d.image) loadPhoto(card, d.image, d.thumb);
+  if (likes.isLiked(pageid)) updateSummaryCards();   // miniatura do paska polubionych
 }
 
 /* Zdjęcie: najpierw powiększona miniatura, przy błędzie oryginalna miniatura, na końcu zostaje placeholder. */
@@ -878,64 +1205,22 @@ function loadPhoto(card, src, fallbackSrc) {
   img.src = src;
 }
 
-/* ---------- Odpowiedzi ---------- */
+/* ---------- Nawigacja po feedzie ---------- */
 
-function answer(pageid, known) {
-  const id = Number(pageid);
-  const place = state.places.find((p) => p.pageid === id);
-  if (!place || typeof state.answers[id] === 'boolean') return false;
-  state.answers[id] = Boolean(known);
-  const stored = storageGet(STORAGE_ANSWERS, {});
-  const next = stored && typeof stored === 'object' ? stored : {};
-  next[id] = Boolean(known);
-  storageSet(STORAGE_ANSWERS, next);
-
-  const card = cardsById.get(id);
-  if (card) markCard(card, Boolean(known));
-  updateProgress();
-  updateRingCards();
-  updateEndCard();
-  if (state.places[state.places.length - 1] === place) loadNextRing();   // ostatnia załadowana karta → dociągamy
-  window.setTimeout(() => advanceFrom(card, id), ADVANCE_DELAY);
-  return true;
-}
-
-function markCard(card, known) {
-  if (!card) return;
-  card.classList.add('is-answered');
-  card.dataset.answer = known ? 'true' : 'false';
-  card.querySelector('.card-stamp-text').textContent = known ? 'Wiedziałeś' : 'Nie wiedziałeś';
-  card.querySelectorAll('.btn-answer').forEach((b) => { b.disabled = true; });
-}
-
-function unmarkCard(card) {
-  card.classList.remove('is-answered');
-  delete card.dataset.answer;
-  card.querySelectorAll('.btn-answer').forEach((b) => { b.disabled = false; });
-}
-
-/* Po odpowiedzi: do następnej karty pierścienia albo następnej karty miejsca bez odpowiedzi; gdy nic nie zostało —
-   do ogona feedu (ładowanie kolejnego pierścienia lub karta końcowa). */
-function advanceFrom(card, pageid) {
-  if (state.screen !== 'feed') return;
-  let start = card ? Number(card.dataset.index) + 1 : -1;
-  if (start < 0) start = state.items.findIndex((it) => it.type === 'place' && it.place.pageid === pageid) + 1;
-  let targetIndex = -1;
-  for (let i = start; i < state.items.length; i++) {
-    const it = state.items[i];
-    if (it.type === 'ring' || typeof state.answers[it.place.pageid] !== 'boolean') { targetIndex = i; break; }
-  }
+/* Przesunięcie w lewo: następny element feedu (karta miejsca, karta pierścienia albo ogon). */
+function advanceFrom(card) {
+  if (state.screen !== 'feed' || !card) return;
+  const next = Number(card.dataset.index) + 1;
   let target;
-  if (targetIndex >= 0) {
-    renderUpTo(targetIndex + 1);
-    target = els.feed.children[targetIndex];
+  if (next < state.items.length) {
+    renderUpTo(next + 1);
+    target = els.feed.children[next];
   } else {
     renderUpTo(state.items.length);   // ogon ma stać na swoim ostatecznym miejscu, zanim do niego przewiniemy
     target = tailEl || els.feed.lastElementChild;
   }
-  if (!target) return;
+  if (!target || target === card) return;
   scrollToCard(target);
-  // Fokus wędruje z (już nieaktywnego) przycisku na następną kartę, żeby Tab szedł dalej, a nie od początku.
   if (typeof target.focus === 'function') target.focus({ preventScroll: true });
 }
 
@@ -944,48 +1229,37 @@ function scrollToCard(el) {
   els.feed.scrollTo({ top: el.offsetTop, behavior: reducedMotion() ? 'auto' : 'smooth' });
 }
 
-/* „Jeszcze raz”: usuwa odpowiedzi dla wszystkich załadowanych pierścieni i wraca na pierwszą kartę. */
-function resetAnswers() {
-  const stored = storageGet(STORAGE_ANSWERS, {});
-  const next = stored && typeof stored === 'object' ? stored : {};
-  state.places.forEach((p) => { delete next[p.pageid]; });
-  storageSet(STORAGE_ANSWERS, next);
-  state.answers = {};
-  cardsById.forEach((card) => unmarkCard(card));
-  updateProgress();
-  updateRingCards();
-  updateEndCard();
-  scrollToCard(els.feed.firstElementChild);
-}
-
-/* ---------- Gest przesunięcia ----------
+/* ---------- Gesty na karcie ----------
    Pointer Events: po SWIPE_LOCK px decydujemy, czy ruch jest poziomy. Pionowy zostawiamy przeglądarce
    (touch-action: pan-y na karcie → przy przewijaniu dostajemy pointercancel). Poziomy przechwytujemy:
-   karta jedzie za palcem i lekko się przechyla, etykieta „Wiedziałem”/„Nie wiedziałem” wyłania się
-   proporcjonalnie do progu. Puszczenie za progiem = odpowiedź, przed progiem = powrót na miejsce. */
-function attachSwipe(card, pageid) {
-  const labelKnown = card.querySelector('.swipe-label-known');
-  const labelUnknown = card.querySelector('.swipe-label-unknown');
+   karta jedzie za palcem i lekko się przechyla, etykieta „Lubię” / „Dalej” wyłania się proporcjonalnie do progu.
+   Puszczenie za progiem w prawo = polubienie (serce), w lewo = następna karta; przed progiem = powrót na miejsce.
+   Podwójne stuknięcie w zdjęcie (poza przyciskami i linkami) = polubienie. */
+function attachGestures(card, pageid) {
+  const labelLike = card.querySelector('.swipe-label-like');
+  const labelSkip = card.querySelector('.swipe-label-skip');
   let pointerId = null;
   let startX = 0;
   let startY = 0;
   let dx = 0;
   let mode = null; // null | 'h' | 'v'
+  let swiped = false;
+  let lastTap = 0;
 
   const reset = () => {
     card.classList.remove('is-dragging');
     card.style.transform = '';
-    labelKnown.style.opacity = '0';
-    labelUnknown.style.opacity = '0';
+    labelLike.style.opacity = '0';
+    labelSkip.style.opacity = '0';
     pointerId = null;
     mode = null;
     dx = 0;
   };
 
   card.addEventListener('pointerdown', (e) => {
+    swiped = false;
     if (pointerId !== null || (e.pointerType === 'mouse' && e.button !== 0)) return;
     if (e.target.closest('button, a, input')) return;
-    if (card.classList.contains('is-answered')) return;
     pointerId = e.pointerId;
     startX = e.clientX;
     startY = e.clientY;
@@ -1009,16 +1283,20 @@ function attachSwipe(card, pageid) {
     const tilt = Math.max(-10, Math.min(10, dx / 18));
     card.style.transform = `translateX(${dx}px) rotate(${tilt}deg)`;
     const strength = Math.min(1, Math.abs(dx) / SWIPE_THRESHOLD);
-    labelKnown.style.opacity = dx > 0 ? String(strength) : '0';
-    labelUnknown.style.opacity = dx < 0 ? String(strength) : '0';
+    labelLike.style.opacity = dx > 0 ? String(strength) : '0';
+    labelSkip.style.opacity = dx < 0 ? String(strength) : '0';
   });
 
   const finish = (e) => {
     if (e.pointerId !== pointerId) return;
-    const decided = mode === 'h' && e.type === 'pointerup' && Math.abs(dx) >= SWIPE_THRESHOLD;
-    const known = dx > 0;
+    const horizontal = mode === 'h';
+    const decided = horizontal && e.type === 'pointerup' && Math.abs(dx) >= SWIPE_THRESHOLD;
+    const right = dx > 0;
     reset();
-    if (decided) answer(pageid, known);
+    if (horizontal) swiped = true;   // click po przeciągnięciu nie jest stuknięciem
+    if (!decided) return;
+    if (right) likeFromGesture(pageid, card);
+    else advanceFrom(card);
   };
   card.addEventListener('pointerup', finish);
   card.addEventListener('pointercancel', finish);
@@ -1028,13 +1306,26 @@ function attachSwipe(card, pageid) {
     if (e.target !== card || e.pointerId !== pointerId) return;
     reset();
   });
+
+  card.addEventListener('click', (e) => {
+    if (e.target.closest('button, a, input')) return;
+    if (swiped) { swiped = false; return; }
+    const now = performance.now();
+    if (now - lastTap < DOUBLE_TAP) {
+      lastTap = 0;
+      likeFromGesture(pageid, card);
+    } else {
+      lastTap = now;
+    }
+  });
 }
 
 /* ---------- Udostępnianie ---------- */
 
-function shareTextFor(radius, pct) {
+function shareTextFor(radius, places) {
   const url = location.href.split('#')[0];
-  return `Znam ${pct}% miejsc w promieniu ${formatRadius(radius)} od siebie. Sprawdź swoją okolicę: ${url}`;
+  const { n, liked } = reviewStats(places);
+  return `Odkryłem ${n} ${pluralPlaces(n)} w promieniu ${formatRadius(radius)} od siebie, ${liked} z nich polubiłem. Sprawdź swoją okolicę: ${url}`;
 }
 
 async function share(text) {
@@ -1176,6 +1467,7 @@ async function submitPlace(event) {
 function showStart() {
   loadToken += 1; // unieważnia trwające pobieranie listy
   locateToken += 1;
+  closePanel();
   state.screen = 'start';
   state.rings = [];
   state.ringIndex = -1;
@@ -1183,7 +1475,6 @@ function showStart() {
   state.places = [];
   state.items = [];
   state.details = {};
-  state.answers = {};
   state.index = 0;
   render();
   els['start-button'].focus();
@@ -1196,6 +1487,7 @@ function changePlace() {
 
 function init() {
   cacheElements();
+  loadPersisted();
   const savedRadius = Number(storageGet(STORAGE_RADIUS, DEFAULT_RADIUS));
   state.radius = RADII.includes(savedRadius) ? savedRadius : DEFAULT_RADIUS;
   buildChips();
@@ -1205,12 +1497,16 @@ function init() {
   els['place-form'].addEventListener('submit', submitPlace);
   els['retry-button'].addEventListener('click', () => { if (lastAction) lastAction(); });
   els['change-place'].addEventListener('click', changePlace);
+  els['my-places'].addEventListener('click', () => (state.panelOpen ? closePanel() : openPanel()));
+  els['panel-close'].addEventListener('click', closePanel);
+  els['my-places-panel'].addEventListener('click', (e) => { if (e.target === els['my-places-panel']) closePanel(); });
+  document.addEventListener('keydown', onPanelKeydown);
   window.addEventListener('popstate', () => {
     historyPushed = false;
     if (state.screen !== 'start') showStart();
   });
 
-  // Rzeczywista wysokość paska (z wcięciem systemowym) jako zmienna CSS dla kart podsumowań i pieczątki.
+  // Rzeczywista wysokość paska (z wcięciem systemowym) jako zmienna CSS dla kart podsumowań.
   if ('ResizeObserver' in window) {
     new ResizeObserver(() => {
       const h = els.topbar.offsetHeight;
@@ -1219,7 +1515,7 @@ function init() {
   }
 
   render();
-  window.WM = { state, loadAround, answer, loadNextRing };
+  window.WM = { state, loadAround, loadNextRing, like: toggleLike, save: toggleSave, markSeen, clearSeen, rng, likes, saved };
 }
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);

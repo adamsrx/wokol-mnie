@@ -1,5 +1,5 @@
 /* Wokół mnie — arkusz stylów. Ciemny, immersyjny „przewodnik terenowy”: jeden akcent (mosiądz),
-   szeryfowa czcionka wyświetlania, monospace dla odczytów liczbowych (odległość, licznik). */
+   szeryfowa czcionka wyświetlania, monospace dla odczytów liczbowych (odległość). */
 
 :root {
   --bg: #0b0f0e;
@@ -105,7 +105,7 @@ button, input { font: inherit; color: inherit; }
   cursor: pointer;
   text-decoration: none;
   touch-action: manipulation;
-  transition: transform var(--dur) var(--ease), background-color var(--dur) var(--ease), border-color var(--dur) var(--ease);
+  transition: transform var(--dur) var(--ease), background-color var(--dur) var(--ease), border-color var(--dur) var(--ease), color var(--dur) var(--ease);
 }
 .btn:active { transform: scale(.97); }
 
@@ -161,6 +161,24 @@ button, input { font: inherit; color: inherit; }
   cursor: pointer;
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
+}
+.btn-ghost-icon { width: 44px; padding: 0; justify-content: center; }
+.btn-ghost[aria-expanded="true"] { border-color: var(--accent); }
+
+/* Licznik zapisanych miejsc na przycisku „Moje miejsca”. */
+.badge {
+  display: inline-grid;
+  place-items: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 11px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
 }
 
 .input {
@@ -356,33 +374,11 @@ button, input { font: inherit; color: inherit; }
   justify-content: space-between;
   gap: 8px;
 }
-
-.progress {
-  display: inline-flex;
-  align-items: center;
-  min-height: 40px;
-  margin: 0;
-  padding: 0 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--pill);
-  background: rgba(var(--shade), .55);
-  font-family: var(--font-mono);
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: .02em;
-  white-space: nowrap;
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-}
-.progress:empty { display: none; }
 .topbar .btn-ghost { flex: 0 0 auto; }
+/* Wąski ekran: „Zmień miejsce” zostaje samą strzałką, „Moje miejsca” zachowuje nazwę. */
 @media (max-width: 379px) {
-  .topbar .btn-ghost { width: 44px; padding: 0; justify-content: center; }
-  .topbar .btn-ghost span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .topbar #change-place { width: 44px; padding: 0; justify-content: center; }
+  .topbar #change-place span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 }
 
 .chips-slot-bar { display: flex; justify-content: center; }
@@ -442,7 +438,7 @@ button, input { font: inherit; color: inherit; }
   scroll-snap-align: start;
   scroll-snap-stop: always;
   background: var(--bg-2);
-  touch-action: pan-y;                  /* pion natywnie, poziom przez Pointer Events */
+  touch-action: pan-y;                  /* pion natywnie, poziom przez Pointer Events, bez zoomu podwójnym stuknięciem */
   user-select: none;
   -webkit-user-select: none;
   transition: transform 200ms var(--ease);
@@ -609,33 +605,41 @@ button, input { font: inherit; color: inherit; }
 .pill-link .icon { width: 16px; height: 16px; color: var(--accent); }
 @media (hover: hover) { .pill-link:hover { border-color: var(--ink-2); background: rgba(var(--shade), .75); } }
 
+/* Akcje karty: „Zapisz” (zakładka) i „Lubię” (serce) — przełączniki z aria-pressed. */
 .card-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
   margin-top: 4px;
 }
-.btn-answer { min-height: 56px; padding: 0 10px; font-size: 15px; }
-.btn-answer .icon { width: 18px; height: 18px; }
-@media (max-width: 374px) { .btn-answer .icon { display: none; } }
+.btn-toggle { min-height: 56px; padding: 0 10px; font-size: 15px; }
+.btn-toggle .icon { width: 20px; height: 20px; transition: transform 200ms cubic-bezier(.2, 1.4, .3, 1); }
+.btn-toggle[aria-pressed="true"] .icon { --icon-fill: currentColor; transform: scale(1.12); }
+.btn-like[aria-pressed="true"] { background: var(--accent-2); }
+.btn-save[aria-pressed="true"] { border-color: var(--accent); color: var(--accent-2); }
+.like-count { font-family: var(--font-mono); font-size: 13px; opacity: .85; }
+@media (max-width: 374px) { .btn-toggle { padding: 0 6px; gap: 8px; } }
 
 /* Niskie ekrany (≤ 700 px): ciaśniejsza treść karty, żeby tytuł został w ciemnej strefie gradientu.
-   Reguły stoją po bazowych .card-link / .btn-answer, bo mają tę samą specyficzność. */
+   Reguły stoją po bazowych .pill-link / .btn-toggle, bo mają tę samą specyficzność. */
 @media (max-height: 700px) {
   .card-body { gap: 6px; padding-bottom: calc(var(--safe-bottom) + 12px); }
   .card-title { font-size: clamp(23px, 6.6vw, 30px); }
   .card-extract { -webkit-line-clamp: 4; font-size: 15px; line-height: 1.45; }
   .pill-link { min-height: 38px; font-size: 13px; }
-  .btn-answer { min-height: 50px; }
+  .btn-toggle { min-height: 50px; }
 }
 @media (max-height: 600px) { .card-extract { -webkit-line-clamp: 3; } }
 
-/* Etykieta pokazywana podczas przesuwania; opacity steruje JS. */
+/* Etykieta pokazywana podczas przesuwania („Lubię” w prawo, „Dalej” w lewo); opacity steruje JS. */
 .swipe-label {
   position: absolute;
   top: 36%;
   left: 50%;
   z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
   padding: 10px 20px;
   border: 3px solid currentColor;
   border-radius: 12px;
@@ -649,40 +653,53 @@ button, input { font: inherit; color: inherit; }
   pointer-events: none;
   background: rgba(var(--shade), .35);
 }
-.swipe-label-known { color: var(--accent); transform: translateX(-50%) rotate(-8deg); }
-.swipe-label-unknown { color: var(--ink); transform: translateX(-50%) rotate(8deg); }
+.swipe-label .icon { width: 30px; height: 30px; --icon-fill: currentColor; }
+.swipe-label-like { color: var(--accent); transform: translateX(-50%) rotate(-8deg); }
+.swipe-label-skip { color: var(--ink); transform: translateX(-50%) rotate(8deg); }
 
-/* Znacznik po odpowiedzi — „pieczątka” w rogu karty. */
-.card-stamp {
+/* Serce na środku karty po podwójnym stuknięciu / przesunięciu w prawo. */
+.card-heart {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 4;
+  width: 128px;
+  height: 128px;
+  margin: -64px 0 0 -64px;
+  color: var(--accent);
+  opacity: 0;
+  pointer-events: none;
+  filter: drop-shadow(0 12px 30px rgba(0, 0, 0, .55));
+}
+.card-heart svg { width: 100%; height: 100%; --icon-fill: currentColor; }
+.card.is-burst .card-heart { animation: heart-burst 700ms var(--ease) forwards; }
+@keyframes heart-burst {
+  0% { opacity: 0; transform: scale(.4); }
+  25% { opacity: 1; transform: scale(1.15); }
+  60% { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1.25); }
+}
+
+/* Dyskretny znacznik polubionej karty w rogu (pod paskiem). */
+.card-liked-mark {
   position: absolute;
   top: calc(var(--topbar-h) + 6px);
   right: 16px;
   z-index: 3;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: rgba(var(--shade), .55);
+  color: var(--accent);
   opacity: 0;
-  transform: rotate(8deg) scale(1.35);
+  transform: scale(.6);
   pointer-events: none;
-}
-.card.is-answered .card-stamp {
-  opacity: 1;
-  transform: rotate(8deg) scale(1);
   transition: opacity 160ms var(--ease), transform 260ms cubic-bezier(.2, 1.4, .3, 1);
 }
-.card-stamp-text {
-  display: inline-block;
-  padding: 8px 14px;
-  border: 2.5px solid currentColor;
-  border-radius: 10px;
-  background: rgba(var(--shade), .55);
-  color: var(--ink);
-  font-family: var(--font-mono);
-  font-size: 13px;
-  letter-spacing: .14em;
-  text-transform: uppercase;
-}
-.card[data-answer="true"] .card-stamp-text { color: var(--accent); }
-.card.is-answered .btn-answer { opacity: .4; pointer-events: none; }
-.card.is-answered .card-photo,
-.card.is-answered .card-placeholder { filter: saturate(.55) brightness(.75); }
+.card-liked-mark .icon { --icon-fill: currentColor; }
+.card.is-liked .card-liked-mark { opacity: 1; transform: scale(1); }
 
 /* ---------- Karty podsumowań: pierścień, ładowanie / błąd, koniec ---------- */
 
@@ -707,32 +724,7 @@ button, input { font: inherit; color: inherit; }
   flex: 0 0 auto;
   text-align: center;
 }
-.end-meter { position: relative; width: 176px; height: 176px; }
-.end-ring { width: 100%; height: 100%; transform: rotate(-90deg); }
-.end-ring-track { fill: none; stroke: var(--line); stroke-width: 7; }
-.end-ring-value {
-  fill: none;
-  stroke: var(--accent);
-  stroke-width: 7;
-  stroke-linecap: round;
-  stroke-dasharray: var(--pct, 0) 100;
-  transition: stroke-dasharray 900ms var(--ease);
-}
-.end-percent {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin: 0;
-  font-family: var(--font-display);
-  font-weight: 700;
-  font-size: 58px;
-  line-height: 1;
-  font-variant-numeric: tabular-nums;
-}
-.end-percent-sign { position: relative; top: -14px; margin-left: 3px; font-size: 24px; color: var(--ink-2); }
-.end-title {
+.end-title, .ring-title {
   margin: 0;
   font-family: var(--font-display);
   font-weight: 600;
@@ -740,24 +732,40 @@ button, input { font: inherit; color: inherit; }
   line-height: 1.15;
   text-wrap: balance;
 }
-.end-sub { margin: 0; color: var(--ink-2); }
+.ring-title { font-size: 26px; }
+.end-sub, .ring-line { margin: 0; color: var(--ink-2); text-wrap: pretty; }
 .end-actions { display: grid; gap: 10px; width: 100%; margin-top: 8px; }
-
-/* Karta pierścienia: mniejszy miernik, jeden przycisk, zapowiedź następnego pierścienia ze strzałką na dole. */
-.end-meter-sm { width: 120px; height: 120px; }
-.end-meter-sm .end-percent { font-size: 40px; }
-.end-meter-sm .end-percent-sign { top: -10px; font-size: 18px; }
-.ring-eyebrow { margin: 0; }
-.ring-title {
-  margin: 0;
-  font-family: var(--font-display);
-  font-weight: 600;
-  font-size: 26px;
-  line-height: 1.15;
-  text-wrap: balance;
-}
-.ring-score { margin: 0; color: var(--ink-2); }
+.ring-eyebrow, .end-eyebrow { margin: 0; }
 .ring-share { min-width: 220px; margin-top: 6px; }
+
+/* Pasek polubionych miejsc (do 3): okrągłe miniatury albo pierwsza litera na kolorze z tytułu. */
+.liked-strip {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.liked-thumb {
+  display: grid;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  overflow: hidden;
+  border: 2px solid var(--accent);
+  border-radius: 50%;
+  background: var(--ph, var(--bg-3));
+  color: rgba(255, 255, 255, .78);
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 30px;
+  line-height: 1;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, .45);
+}
+.liked-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
+
+/* Zapowiedź następnego pierścienia ze strzałką na dole karty pierścienia. */
 .ring-next {
   display: flex;
   flex: 0 0 auto;
@@ -784,17 +792,107 @@ button, input { font: inherit; color: inherit; }
 
 @media (max-height: 700px) {
   .summary-inner { gap: 10px; }
-  .end-meter { width: 120px; height: 120px; }
-  .end-percent { font-size: 40px; }
-  .end-percent-sign { top: -10px; font-size: 18px; }
-  .end-meter-sm { width: 100px; height: 100px; }
-  .end-meter-sm .end-percent { font-size: 34px; }
-  .end-meter-sm .end-percent-sign { top: -8px; font-size: 16px; }
+  .liked-thumb { width: 56px; height: 56px; font-size: 24px; }
   .end-title, .ring-title { font-size: 22px; }
   .end-actions { gap: 8px; margin-top: 4px; }
   .end-actions .btn { min-height: 46px; }
   .ring-next { padding-top: 10px; }
 }
+
+/* ---------- Panel „Moje miejsca” ---------- */
+
+.panel-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: flex-end;
+  background: rgba(var(--shade), .62);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+.panel {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-height: 86%;
+  padding-bottom: var(--safe-bottom);
+  border-radius: 22px 22px 0 0;
+  background: var(--bg-2);
+  box-shadow: 0 -20px 60px rgba(0, 0, 0, .6);
+  animation: panel-in 260ms var(--ease);
+}
+@keyframes panel-in { from { opacity: 0; transform: translateY(24px); } }
+@media (min-width: 720px) {
+  .panel-backdrop { align-items: center; justify-content: center; }
+  .panel { max-width: 440px; max-height: 80%; border-radius: 22px; }
+}
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 14px 16px 10px 20px;
+  border-bottom: 1px solid var(--line);
+}
+.panel-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 26px;
+  line-height: 1.1;
+}
+.panel-empty {
+  margin: 0;
+  padding: 28px 20px 32px;
+  color: var(--ink-2);
+  text-align: center;
+  text-wrap: pretty;
+}
+.saved-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  padding: 4px 0 8px;
+  overflow-y: auto;
+  list-style: none;
+}
+.saved-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 14px 12px 14px 20px;
+  border-bottom: 1px solid var(--line);
+}
+.saved-row:last-child { border-bottom: 0; }
+.saved-main {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.saved-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 19px;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+.saved-distance {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.saved-distance .icon { width: 16px; height: 16px; }
+.saved-remove { flex: 0 0 auto; margin-top: -4px; }
 
 /* ---------- Toast i noscript ---------- */
 
@@ -836,4 +934,6 @@ button, input { font: inherit; color: inherit; }
     transition-duration: .01ms !important;
     scroll-behavior: auto !important;
   }
+  /* Serce bez animacji: po prostu pokazuje się na chwilę (czas trwania steruje JS). */
+  .card.is-burst .card-heart { animation: none !important; transition: none !important; opacity: 1; transform: none; }
 }

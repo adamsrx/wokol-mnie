@@ -179,26 +179,34 @@ export const test = base.extend({
 });
 export { expect };
 
-export async function startFeed(page, options) {
-  const log = await mockWiki(page, options);
+/* v0.2: kolejność kart w pierścieniu jest losowa. Testom, którym zależy na kolejności, unieruchamiamy losowanie
+   (0.9999 w tasowaniu Fishera–Yatesa zostawia kolejność z API); options.random = true zostawia prawdziwe losowanie. */
+export const deterministic = (page) => page.evaluate(() => { window.WM.rng.next = () => 0.9999; });
+
+export async function startFeed(page, options = {}) {
+  const { random = false, ...mockOptions } = options;
+  const log = await mockWiki(page, mockOptions);
   await page.goto('./');
+  if (!random) await deterministic(page);
   await page.getByTestId('start-button').click();
   await expect(page.getByTestId('feed')).toBeVisible({ timeout: 10_000 });
   await expect(page.getByTestId('card').first()).toBeVisible({ timeout: 10_000 });
   return log;
 }
 
+/* Przewija feed na sam dół tak długo, aż załadują się wszystkie pierścienie i stanie karta końcowa. */
+export async function scrollToEnd(page) {
+  await expect.poll(async () => {
+    await page.evaluate(() => { const f = document.getElementById('feed'); f.scrollTo({ top: f.scrollHeight, behavior: 'auto' }); });
+    return page.evaluate(() => window.WM.state.feedDone && Boolean(document.querySelector('[data-testid="end-card"]')));
+  }, { timeout: 20_000, intervals: [200, 300, 500] }).toBe(true);
+}
+
+export const cardFor = (page, pageid) => page.locator(`[data-testid="card"][data-pageid="${pageid}"]`);
+
 export const shot = (testInfo, name) => join(ARTIFACTS, `qa-${testInfo.project.name}-${name}.png`);
 
-/* v0.1 (pierścienie): odpowiada „Wiedziałem” na każdą załadowaną kartę, aż feed przejdzie wszystkie pierścienie
-   do 10 km (state.feedDone) — dopiero wtedy na końcu feedu stoi karta końcowa. */
-export async function answerAllRings(page) {
-  await expect.poll(() => page.evaluate(() => {
-    const s = window.WM.state;
-    for (const p of s.places) if (typeof s.answers[p.pageid] !== 'boolean') window.WM.answer(p.pageid, true);
-    return s.feedDone && s.places.every((p) => typeof s.answers[p.pageid] === 'boolean');
-  }), { timeout: 20_000, intervals: [250, 500, 1000] }).toBe(true);
-}
+
 
 /* Nadpisanie geolokalizacji sterowane z testu: window.__geo.resolve({latitude, longitude}) / reject(code). */
 export const GEO_OVERRIDE = `
