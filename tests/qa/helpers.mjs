@@ -11,6 +11,8 @@ export const fixture = (name) => JSON.parse(readFileSync(join(fixturesDir, name)
 export const FIX = {
   g1000: fixture('geosearch-1000.json'),
   g3000: fixture('geosearch-3000.json'),
+  g5000: fixture('geosearch-5000.json'),
+  g10000: fixture('geosearch-10000.json'),
   gEmpty: fixture('geosearch-empty.json'),
   gKrakow: fixture('geosearch-krakow.json'),
   summaries: fixture('summaries.json'),
@@ -135,6 +137,8 @@ export async function mockWiki(page, o = {}) {
         if (Array.isArray(opts.places)) return route.fulfill(json({ batchcomplete: true, query: { geosearch: opts.places } }));
         if (coord.startsWith('50.06')) return route.fulfill(json(FIX.gKrakow));
         if (radius <= 500) return route.fulfill(json(FIX.gEmpty));
+        // Jak w smoke: 1 km → 6, 3 km → 9 miejsc; dalsze pierścienie (5 i 10 km) nie wnoszą tu nic nowego,
+        // więc po 3 km feed v0.1 zamyka się kartą końcową.
         return route.fulfill(json(radius >= 3000 ? FIX.g3000 : FIX.g1000));
       }
       if (p.get('prop') === 'extracts|pageimages') {
@@ -185,6 +189,16 @@ export async function startFeed(page, options) {
 }
 
 export const shot = (testInfo, name) => join(ARTIFACTS, `qa-${testInfo.project.name}-${name}.png`);
+
+/* v0.1 (pierścienie): odpowiada „Wiedziałem” na każdą załadowaną kartę, aż feed przejdzie wszystkie pierścienie
+   do 10 km (state.feedDone) — dopiero wtedy na końcu feedu stoi karta końcowa. */
+export async function answerAllRings(page) {
+  await expect.poll(() => page.evaluate(() => {
+    const s = window.WM.state;
+    for (const p of s.places) if (typeof s.answers[p.pageid] !== 'boolean') window.WM.answer(p.pageid, true);
+    return s.feedDone && s.places.every((p) => typeof s.answers[p.pageid] === 'boolean');
+  }), { timeout: 20_000, intervals: [250, 500, 1000] }).toBe(true);
+}
 
 /* Nadpisanie geolokalizacji sterowane z testu: window.__geo.resolve({latitude, longitude}) / reject(code). */
 export const GEO_OVERRIDE = `

@@ -1,19 +1,37 @@
 # Wokół mnie
 
 Lekka aplikacja webowa (statyczna PWA, bez backendu): pełnoekranowe karty z polskiej Wikipedii
-o miejscach w wybranym promieniu od ciebie — 500 m, 1 km, 3 km albo 5 km. Przesuwasz karty jak
-w TikToku, przy każdej odpowiadasz „Wiedziałem” / „Nie wiedziałem”, a na końcu dostajesz wynik
-(„Znasz 23% okolicy w promieniu 1 km”) do udostępnienia.
+o miejscach wokół ciebie. Przesuwasz karty jak w TikToku, przy każdej odpowiadasz „Wiedziałem” /
+„Nie wiedziałem”, a feed nie ma końca w zasięgu Wikipedii: zaczyna od wybranego promienia (500 m,
+1 km, 3 km, 5 km albo 10 km) i gdy karty się kończą, sam dociąga kolejne pierścienie — aż do 10 km.
+Między pierścieniami dostajesz podsumowanie („Znasz 83% (5 z 6 miejsc)” w promieniu 1 km) do
+udostępnienia, a po 10 km kartę końcową z wynikiem łącznym. Każda karta ma link „Czytaj w Wikipedii”
+i „Nawiguj” (trasa piesza w Mapach Google).
 
 Dane pochodzą wprost z API `pl.wikipedia.org` (geosearch + podsumowania stron), zdjęcia z Wikimedia
-Commons. Odpowiedzi i wybrany promień zapisują się lokalnie w przeglądarce (localStorage).
+Commons. Odpowiedzi i wybrany promień startowy zapisują się lokalnie w przeglądarce (localStorage).
+
+## Jak działa feed (v0.1 „nieskończony feed”)
+
+- Promienie idą drabinką **500 m → 1 km → 3 km → 5 km → 10 km**; chip na starcie (i w pasku) wybiera
+  pierścień startowy. Gdy jesteś 2 karty od końca albo odpowiesz na ostatnią kartę, aplikacja pobiera
+  następny pierścień, pomija miejsca już pokazane i dokleja nowe karty w kolejności odległości.
+- Po kartach pierścienia jest karta podsumowania: wynik tego pierścienia, „Udostępnij” i zapowiedź
+  „Dalej: miejsca 1–3 km stąd” — wystarczy przewinąć dalej. Pusty pierścień startowy pokazuje
+  „W promieniu 500 m nic nie ma” i od razu szuka dalej; pusty dalszy pierścień jest pomijany.
+- Po 10 km (maksimum Wikipedii) pojawia się karta końcowa: „To wszystko, co Wikipedia zna w promieniu
+  10 km”, łączny wynik, „Udostępnij”, „Zmień miejsce”, „Jeszcze raz”. Stan „Tu jest pusto” pojawia się
+  tylko wtedy, gdy w żadnym pierścieniu do 10 km nic nie ma.
+- Licznik w pasku („3 z 24 · znasz 2”) liczy karty miejsc ze wszystkich załadowanych pierścieni.
+- „Nawiguj” otwiera `https://www.google.com/maps/dir/?api=1&destination=LAT,LON&travelmode=walking`
+  ze współrzędnymi miejsca (z geosearch, a gdy Wikipedia poda dokładniejsze w podsumowaniu — z nich).
 
 ## Pliki
 
 - `index.html`, `styles.css`, `app.js` — cała aplikacja (czysty HTML/CSS/JS, bez frameworków i bez budowania),
 - `manifest.webmanifest`, `icon.svg`, `apple-touch-icon.png` — PWA-lite (dodanie do ekranu głównego),
 - `tools/make-apple-icon.mjs` — generator `apple-touch-icon.png` (bez zależności: `node tools/make-apple-icon.mjs`),
-- `tests/` — testy dymne Playwright z mockami Wikipedii (`tests/fixtures/`), zrzuty ekranu trafiają do `tests/artifacts/`.
+- `tests/` — testy dymne Playwright z mockami Wikipedii (`tests/fixtures/`: geosearch dla 1, 3, 5 i 10 km z nakładającymi się miejscami, podsumowania, zdjęcia), zrzuty ekranu trafiają do `tests/artifacts/`.
 
 ## Uruchomienie lokalne
 
@@ -58,7 +76,7 @@ Wszystkie ścieżki w aplikacji są względne, więc działa zarówno z podkatal
 jak i z roota własnej domeny. `node_modules/` i `tests/artifacts/` są w `.gitignore` i nie
 trafiają na Pages.
 
-## Zakres v0
+## Zakres
 
 Bez kont, backendu, service workera i analityki. Treści i zdjęcia: Wikipedia / Wikimedia Commons
 (licencja CC BY-SA), każda karta linkuje do źródłowego artykułu.

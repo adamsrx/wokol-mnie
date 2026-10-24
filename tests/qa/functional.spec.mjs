@@ -84,8 +84,17 @@ test.describe('QA: funkcjonalne', () => {
     await expect(page.getByTestId('radius-chip-3000')).toHaveAttribute('aria-checked', 'true');
     console.log(`[QA] bez localStorage po zmianie promienia: progress="${await page.getByTestId('progress').textContent()}" (odpowiedzi z pamięci przepadają — loadAround zeruje state.answers)`);
     await page.evaluate(() => { for (const p of window.WM.state.places) window.WM.answer(p.pageid, p.pageid % 2 === 0); });
-    await expect(page.getByTestId('end-card')).toBeInViewport({ ratio: 0.9, timeout: 15_000 });
-    await expect(page.getByTestId('end-card')).toContainText(/Znasz \d+% okolicy w promieniu 3 km/);
+    // v0.1: po ostatniej karcie pierścienia jest karta pierścienia 3 km; pierścienie 5 i 10 km nie wnoszą tu nic nowego,
+    // więc tuż za nią stoi karta końcowa (bez localStorage wynik liczy się z pamięci).
+    const ring = page.getByTestId('ring-card').first();
+    await expect(ring).toBeInViewport({ ratio: 0.9, timeout: 15_000 });
+    await expect(ring).toContainText('To wszystko w promieniu 3 km');
+    await expect(ring).toContainText(/Znasz \d+% \(\d+ z 9 miejsc\)/);
+    const end = page.getByTestId('end-card');
+    await end.scrollIntoViewIfNeeded();
+    await expect(end).toBeInViewport({ ratio: 0.9 });
+    await expect(end).toContainText('To wszystko, co Wikipedia zna w promieniu 10 km');
+    await expect(end).toContainText(/Znasz \d+% \(\d+ z 9 miejsc\)/);
   });
 
   test('@all geolokalizacja: timeout 10 s (kod 3) i wyścig spóźnionego GPS z wpisanym miejscem', async ({ page }) => {
@@ -157,8 +166,10 @@ test.describe('QA: funkcjonalne', () => {
     await page.getByTestId('start-button').click();
     await expect(page.getByTestId('card').first()).toBeVisible();
     const t1 = Date.now() - t0;
-    await expect(page.getByTestId('card')).toHaveCount(100);
+    // v0.1: renderowanie przyrostowe — w DOM bieżąca karta + 40 następnych, reszta czeka w stanie.
     await expect(page.getByTestId('progress')).toHaveText('1 z 100 · znasz 0');
+    expect(await page.evaluate(() => window.WM.state.places.length)).toBe(100);
+    await expect(page.getByTestId('card')).toHaveCount(41);
     await expect(page.getByTestId('card').first().getByTestId('card-extract')).not.toHaveClass(/is-skeleton/);
     const m = await page.evaluate(() => ({
       nodes: document.getElementById('feed').querySelectorAll('*').length,
@@ -170,6 +181,12 @@ test.describe('QA: funkcjonalne', () => {
     expect(m.imgsWithSrc).toBeLessThanOrEqual(4);
     expect(m.details).toBe(4);
     await page.evaluate(() => { for (const p of window.WM.state.places) window.WM.answer(p.pageid, true); });
+    // v0.1: po odpowiedzi na wszystko reszta kart dorenderowuje się, widok idzie na kartę pierścienia 1 km;
+    // dalsze pierścienie zwracają te same 100 miejsc (duplikaty), więc tuż za nią feed zamyka się kartą końcową.
+    await expect(page.getByTestId('ring-card').first()).toBeInViewport({ ratio: 0.5, timeout: 20_000 });
+    await expect(page.getByTestId('ring-card').first()).toContainText('Znasz 100% (100 z 100 miejsc)');
+    await expect(page.getByTestId('card')).toHaveCount(100);
+    await page.getByTestId('end-card').scrollIntoViewIfNeeded();
     await expect(page.getByTestId('end-card')).toBeInViewport({ ratio: 0.5, timeout: 20_000 });
     await expect(page.getByTestId('progress')).toHaveText('100 z 100 · znasz 100');
     const app = await page.locator('#app').boundingBox();

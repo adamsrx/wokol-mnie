@@ -1,0 +1,133 @@
+{
+  "batchcomplete": true,
+  "query": {
+    "geosearch": [
+      {
+        "pageid": 35201,
+        "ns": 0,
+        "title": "Kolumna Zygmunta III Wazy w Warszawie",
+        "lat": 52.24775,
+        "lon": 21.01361,
+        "dist": 92.3,
+        "primary": true
+      },
+      {
+        "pageid": 123,
+        "ns": 0,
+        "title": "Zamek Królewski w Warszawie",
+        "lat": 52.2479,
+        "lon": 21.015,
+        "dist": 210.4,
+        "primary": true
+      },
+      {
+        "pageid": 76112,
+        "ns": 0,
+        "title": "Plac Zamkowy w Warszawie",
+        "lat": 52.24758,
+        "lon": 21.01339,
+        "dist": 246.8,
+        "primary": true
+      },
+      {
+        "pageid": 48803,
+        "ns": 0,
+        "title": "Archikatedra św. Jana Chrzciciela w Warszawie",
+        "lat": 52.24892,
+        "lon": 21.01372,
+        "dist": 318.1,
+        "primary": true
+      },
+      {
+        "pageid": 90455,
+        "ns": 0,
+        "title": "Rynek Starego Miasta w Warszawie",
+        "lat": 52.24975,
+        "lon": 21.01219,
+        "dist": 477.5,
+        "primary": true
+      },
+      {
+        "pageid": 51277,
+        "ns": 0,
+        "title": "Barbakan w Warszawie",
+        "lat": 52.25101,
+        "lon": 21.00981,
+        "dist": 684.9,
+        "primary": true
+      },
+      {
+        "pageid": 62340,
+        "ns": 0,
+        "title": "Pałac Prezydencki w Warszawie",
+        "lat": 52.24307,
+        "lon": 21.01577,
+        "dist": 1402.6,
+        "primary": true
+      },
+      {
+        "pageid": 17788,
+        "ns": 0,
+        "title": "Ogród Saski w Warszawie",
+        "lat": 52.24097,
+        "lon": 21.00671,
+        "dist": 1881.0,
+        "primary": true
+      },
+      {
+        "pageid": 73111,
+        "ns": 0,
+        "title": "Cytadela Warszawska",
+        "lat": 52.26472,
+        "lon": 21.00361,
+        "dist": 2200.7,
+        "primary": true
+      },
+      {
+        "pageid": 29031,
+        "ns": 0,
+        "title": "Pałac Kultury i Nauki",
+        "lat": 52.23194,
+        "lon": 21.00611,
+        "dist": 2764.2,
+        "primary": true
+      },
+      {
+        "pageid": 55870,
+        "ns": 0,
+        "title": "Stadion Narodowy w Warszawie",
+        "lat": 52.23925,
+        "lon": 21.04543,
+        "dist": 3400.5,
+        "primary": true
+      },
+      {
+        "pageid": 40120,
+        "ns": 0,
+        "title": "Łazienki Królewskie w Warszawie",
+        "lat": 52.215,
+        "lon": 21.03528,
+        "dist": 3900.2,
+        "primary": true
+      },
+      {
+        "pageid": 71230,
+        "ns": 0,
+        "title": "Lotnisko Chopina w Warszawie",
+        "lat": 52.16575,
+        "lon": 20.96712,
+        "dist": 7600.9,
+        "primary": true
+      },
+      {
+        "pageid": 68001,
+        "ns": 0,
+        "title": "Pałac w Wilanowie",
+        "lat": 52.16528,
+        "lon": 21.09028,
+        "dist": 9100.4,
+        "primary": true
+      }
+    ]
+  }
+}

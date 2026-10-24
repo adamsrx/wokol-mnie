@@ -430,6 +430,7 @@ button, input { font: inherit; color: inherit; }
   overflow-y: auto;
   scroll-snap-type: y mandatory;
   overscroll-behavior: contain;
+  overflow-anchor: none;                /* doklejane karty nie przesuwają widoku — stoimy tam, gdzie staliśmy */
   scrollbar-width: none;
 }
 .feed::-webkit-scrollbar { display: none; }
@@ -586,21 +587,27 @@ button, input { font: inherit; color: inherit; }
   font-size: 14px;
 }
 
-.card-link {
+/* Rząd linków-pigułek: „Czytaj w Wikipedii” i „Nawiguj” (trasa piesza w Mapach Google). */
+.card-links { display: flex; flex-wrap: wrap; gap: 8px; }
+.pill-link {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  align-self: flex-start;
+  gap: 7px;
   min-height: 44px;
-  border-radius: 8px;
+  padding: 0 14px 0 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--pill);
+  background: rgba(var(--shade), .55);
   color: var(--ink);
   font-weight: 600;
   font-size: 14px;
-  text-decoration: underline;
-  text-underline-offset: 4px;
-  text-decoration-color: var(--accent);
+  line-height: 1.2;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: border-color var(--dur) var(--ease), background-color var(--dur) var(--ease);
 }
-.card-link .icon { width: 16px; height: 16px; }
+.pill-link .icon { width: 16px; height: 16px; color: var(--accent); }
+@media (hover: hover) { .pill-link:hover { border-color: var(--ink-2); background: rgba(var(--shade), .75); } }
 
 .card-actions {
   display: grid;
@@ -618,7 +625,7 @@ button, input { font: inherit; color: inherit; }
   .card-body { gap: 6px; padding-bottom: calc(var(--safe-bottom) + 12px); }
   .card-title { font-size: clamp(23px, 6.6vw, 30px); }
   .card-extract { -webkit-line-clamp: 4; font-size: 15px; line-height: 1.45; }
-  .card-link { min-height: 36px; }
+  .pill-link { min-height: 38px; font-size: 13px; }
   .btn-answer { min-height: 50px; }
 }
 @media (max-height: 600px) { .card-extract { -webkit-line-clamp: 3; } }
@@ -677,19 +684,19 @@ button, input { font: inherit; color: inherit; }
 .card.is-answered .card-photo,
 .card.is-answered .card-placeholder { filter: saturate(.55) brightness(.75); }
 
-/* ---------- Karta końcowa ---------- */
+/* ---------- Karty podsumowań: pierścień, ładowanie / błąd, koniec ---------- */
 
-.card-end {
+.card-summary {
   display: flex;
   flex-direction: column;
-  overflow-y: auto;                     /* na niskim ekranie karta końcowa się przewija, nic nie jest ucięte */
+  overflow-y: auto;                     /* na niskim ekranie karta się przewija, nic nie jest ucięte */
   padding: calc(var(--topbar-h) + 8px) 24px calc(var(--safe-bottom) + 24px);
   background:
     radial-gradient(circle at 50% 38%, transparent 0 120px, rgba(var(--accent-rgb), .1) 121px 122px, transparent 123px 190px, rgba(var(--accent-rgb), .06) 191px 192px, transparent 193px),
     radial-gradient(ellipse at 50% 30%, #1b241f 0, var(--bg) 65%);
   touch-action: auto;
 }
-.end-inner {
+.summary-inner {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -735,14 +742,58 @@ button, input { font: inherit; color: inherit; }
 }
 .end-sub { margin: 0; color: var(--ink-2); }
 .end-actions { display: grid; gap: 10px; width: 100%; margin-top: 8px; }
+
+/* Karta pierścienia: mniejszy miernik, jeden przycisk, zapowiedź następnego pierścienia ze strzałką na dole. */
+.end-meter-sm { width: 120px; height: 120px; }
+.end-meter-sm .end-percent { font-size: 40px; }
+.end-meter-sm .end-percent-sign { top: -10px; font-size: 18px; }
+.ring-eyebrow { margin: 0; }
+.ring-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 26px;
+  line-height: 1.15;
+  text-wrap: balance;
+}
+.ring-score { margin: 0; color: var(--ink-2); }
+.ring-share { min-width: 220px; margin-top: 6px; }
+.ring-next {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  margin: 0;
+  padding-top: 18px;
+  color: var(--ink-2);
+  font-size: 14px;
+  text-align: center;
+  text-wrap: balance;
+}
+.ring-chevron { width: 28px; height: 28px; color: var(--accent); animation: nudge 1.8s ease-in-out infinite; }
+@keyframes nudge {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(6px); }
+}
+
+/* Karta ogona: ładowanie następnego pierścienia albo błąd z ponowieniem (reszta feedu zostaje). */
+.tail-loading, .tail-error { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+.card-tail .status-icon { width: 64px; height: 64px; }
+.card-tail .status-title { font-size: 24px; }
+
 @media (max-height: 700px) {
-  .end-inner { gap: 10px; }
+  .summary-inner { gap: 10px; }
   .end-meter { width: 120px; height: 120px; }
   .end-percent { font-size: 40px; }
-  .end-percent-sign { font-size: 18px; top: -10px; }
-  .end-title { font-size: 22px; }
+  .end-percent-sign { top: -10px; font-size: 18px; }
+  .end-meter-sm { width: 100px; height: 100px; }
+  .end-meter-sm .end-percent { font-size: 34px; }
+  .end-meter-sm .end-percent-sign { top: -8px; font-size: 16px; }
+  .end-title, .ring-title { font-size: 22px; }
   .end-actions { gap: 8px; margin-top: 4px; }
   .end-actions .btn { min-height: 46px; }
+  .ring-next { padding-top: 10px; }
 }
 
 /* ---------- Toast i noscript ---------- */

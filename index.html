@@ -44,6 +44,11 @@
     <symbol id="i-external" viewBox="0 0 24 24">
       <path d="M14 4h6v6M20 4l-9 9M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
     </symbol>
+    <symbol id="i-route" viewBox="0 0 24 24">
+      <circle cx="6" cy="19" r="2.2" fill="currentColor"/>
+      <path d="M6 16.5V11a4 4 0 0 1 4-4h8.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M15.5 3.5 19 7l-3.5 3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
     <symbol id="i-check" viewBox="0 0 24 24">
       <path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
     </symbol>
@@ -56,10 +61,8 @@
     <symbol id="i-back" viewBox="0 0 24 24">
       <path d="M11 5l-7 7 7 7M4 12h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
     </symbol>
-    <symbol id="i-expand" viewBox="0 0 24 24">
-      <circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="2"/>
-      <path d="M12 3v3M12 18v3M3 12h3M18 12h3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-      <circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="3 3"/>
+    <symbol id="i-chevron-down" viewBox="0 0 24 24">
+      <path d="M6 9.5l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
     </symbol>
     <symbol id="i-redo" viewBox="0 0 24 24">
       <path d="M20 12a8 8 0 1 1-2.6-5.9M20 4v5h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -160,6 +163,7 @@
 
   <noscript><p class="noscript">Ta aplikacja potrzebuje włączonego JavaScriptu.</p></noscript>
 
+  <!-- Karta miejsca -->
   <template id="card-template">
     <article class="card" data-testid="card" tabindex="-1">
       <div class="card-media" aria-hidden="true">
@@ -181,10 +185,16 @@
           <span>Nie udało się pobrać opisu.</span>
           <button type="button" class="btn-text card-retry">Spróbuj ponownie</button>
         </p>
-        <a class="card-link" target="_blank" rel="noopener noreferrer">
-          <span>Czytaj w Wikipedii</span>
-          <svg class="icon" aria-hidden="true"><use href="#i-external"/></svg>
-        </a>
+        <div class="card-links">
+          <a class="pill-link card-link" target="_blank" rel="noopener noreferrer">
+            <svg class="icon" aria-hidden="true"><use href="#i-external"/></svg>
+            <span>Czytaj w Wikipedii</span>
+          </a>
+          <a class="pill-link card-navigate" data-testid="card-navigate" target="_blank" rel="noopener noreferrer">
+            <svg class="icon" aria-hidden="true"><use href="#i-route"/></svg>
+            <span>Nawiguj</span>
+          </a>
+        </div>
         <div class="card-actions">
           <button type="button" class="btn btn-secondary btn-answer" data-testid="btn-unknown" data-known="false">
             <svg class="icon" aria-hidden="true"><use href="#i-x"/></svg>
@@ -199,9 +209,57 @@
     </article>
   </template>
 
+  <!-- Karta pierścienia: podsumowanie promienia między pierścieniami -->
+  <template id="ring-template">
+    <section class="card card-summary card-ring" data-testid="ring-card" tabindex="-1">
+      <div class="summary-inner">
+        <p class="eyebrow ring-eyebrow"></p>
+        <div class="end-meter end-meter-sm" role="img">
+          <svg class="end-ring" viewBox="0 0 120 120" aria-hidden="true">
+            <circle class="end-ring-track" cx="60" cy="60" r="52"/>
+            <circle class="end-ring-value" cx="60" cy="60" r="52" pathLength="100"/>
+          </svg>
+          <p class="end-percent"><span class="end-percent-num"></span><span class="end-percent-sign">%</span></p>
+        </div>
+        <h2 class="ring-title"></h2>
+        <p class="ring-score"></p>
+        <button type="button" class="btn btn-primary ring-share" data-testid="ring-share">
+          <svg class="icon" aria-hidden="true"><use href="#i-share"/></svg>
+          <span>Udostępnij</span>
+        </button>
+      </div>
+      <p class="ring-next">
+        <span class="ring-next-text"></span>
+        <svg class="icon ring-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+      </p>
+    </section>
+  </template>
+
+  <!-- Ogon feedu: ładowanie następnego pierścienia albo błąd z ponowieniem -->
+  <template id="tail-template">
+    <section class="card card-summary card-tail" data-testid="loading-card" aria-label="Ładowanie dalszych miejsc" tabindex="-1">
+      <div class="summary-inner">
+        <div class="tail-loading" role="status">
+          <svg class="status-icon spinner" aria-hidden="true"><use href="#i-compass"/></svg>
+          <p class="status-text tail-loading-text"></p>
+        </div>
+        <div class="tail-error" data-testid="ring-error" role="alert" hidden>
+          <svg class="status-icon" aria-hidden="true"><use href="#i-alert"/></svg>
+          <h2 class="status-title">Nie udało się pobrać dalszych miejsc</h2>
+          <p class="status-text tail-error-text"></p>
+          <button type="button" class="btn btn-primary tail-retry" data-testid="ring-retry">
+            <svg class="icon" aria-hidden="true"><use href="#i-redo"/></svg>
+            <span>Spróbuj ponownie</span>
+          </button>
+        </div>
+      </div>
+    </section>
+  </template>
+
+  <!-- Karta końcowa po ostatnim pierścieniu (10 km) -->
   <template id="end-template">
-    <section class="card card-end" data-testid="end-card" aria-label="Wynik" tabindex="-1">
-      <div class="end-inner">
+    <section class="card card-summary card-end" data-testid="end-card" aria-label="Wynik" tabindex="-1">
+      <div class="summary-inner">
         <div class="end-meter" role="img">
           <svg class="end-ring" viewBox="0 0 120 120" aria-hidden="true">
             <circle class="end-ring-track" cx="60" cy="60" r="52"/>
@@ -216,9 +274,9 @@
             <svg class="icon" aria-hidden="true"><use href="#i-share"/></svg>
             <span>Udostępnij</span>
           </button>
-          <button type="button" class="btn btn-secondary end-grow">
-            <svg class="icon" aria-hidden="true"><use href="#i-expand"/></svg>
-            <span>Zwiększ promień</span>
+          <button type="button" class="btn btn-secondary end-change">
+            <svg class="icon" aria-hidden="true"><use href="#i-back"/></svg>
+            <span>Zmień miejsce</span>
           </button>
           <button type="button" class="btn btn-secondary end-again">
             <svg class="icon" aria-hidden="true"><use href="#i-redo"/></svg>

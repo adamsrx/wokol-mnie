@@ -15,7 +15,7 @@ test.describe('QA: żywe API', () => {
       await page.evaluate((i) => document.querySelectorAll('[data-testid="card"]')[i].scrollIntoView(), i);
       await expect(cards.nth(i).getByTestId('card-extract')).not.toHaveClass(/is-skeleton/);
       await expect(cards.nth(i).getByTestId('card-extract')).toContainText(titles[i].slice(0, 5));
-      await expect(cards.nth(i).getByRole('link')).toHaveAttribute('href', `https://pl.m.wikipedia.org/wiki/${encodeURIComponent(titles[i].replace(/ /g, '_'))}`);
+      await expect(cards.nth(i).getByRole('link', { name: /^Czytaj w Wikipedii/ })).toHaveAttribute('href', `https://pl.m.wikipedia.org/wiki/${encodeURIComponent(titles[i].replace(/ /g, '_'))}`);
     }
     const got = Object.fromEntries(log.rest.map((r) => [r.title, r.rawPath]));
     for (let i = 0; i < titles.length; i++) expect(got[titles[i]], titles[i]).toBe(expected[i]);
@@ -91,7 +91,7 @@ test.describe('QA: żywe API', () => {
     }
     await expect(cards.nth(0).getByTestId('card-extract')).toHaveText('Obiekt 1 może oznaczać:');
     await expect(cards.nth(1).getByTestId('card-extract')).toHaveText('Wikipedia nie ma jeszcze opisu tego miejsca.');
-    await expect(cards.nth(1).getByRole('link')).toHaveAttribute('href', 'https://pl.wikipedia.org/wiki/Obiekt_2');
+    await expect(cards.nth(1).getByRole('link', { name: /^Czytaj w Wikipedii/ })).toHaveAttribute('href', 'https://pl.wikipedia.org/wiki/Obiekt_2');
     await expect(cards.nth(1).locator('.card-photo')).toBeHidden();
     await expect(cards.nth(2).getByTestId('card-extract')).toContainText('opis z klasycznego API');
     const fb = log.requests.map((r) => new URL(r.url)).find((u) => u.searchParams.get('prop') === 'extracts|pageimages' && u.searchParams.get('pageids') === '1002');

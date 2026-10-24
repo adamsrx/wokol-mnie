@@ -11,6 +11,8 @@ const fixture = (name) => JSON.parse(readFileSync(join(here, 'fixtures', name), 
 const FIX = {
   g1000: fixture('geosearch-1000.json'),
   g3000: fixture('geosearch-3000.json'),
+  g5000: fixture('geosearch-5000.json'),
+  g10000: fixture('geosearch-10000.json'),
   gEmpty: fixture('geosearch-empty.json'),
   gKrakow: fixture('geosearch-krakow.json'),
   summaries: fixture('summaries.json'),
@@ -22,6 +24,8 @@ const PHOTOS = [1, 2, 3].map((i) => readFileSync(join(here, 'fixtures', `photo-$
 const WARSAW = { latitude: 52.2497, longitude: 21.0122 };
 const ARTIFACTS = join(here, 'artifacts');
 const DISTANCE_RE = /\d+ m stąd|\d,\d km stąd/;
+const NAVIGATE_RE = /^https:\/\/www\.google\.com\/maps\/dir\/\?api=1&destination=-?\d{1,2}\.\d{5},-?\d{1,3}\.\d{5}&travelmode=walking$/;
+const IDS_1000 = [35201, 123, 76112, 48803, 90455, 51277];
 
 const json = (body, status = 200) => ({
   status,
@@ -29,10 +33,14 @@ const json = (body, status = 200) => ({
   headers: { 'access-control-allow-origin': '*' },
   body: JSON.stringify(body),
 });
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/* Mock Wikipedii. Opcje: geosearchFailures (ile pierwszych geosearch ma zwrócić 500), empty (zawsze 0 wyników). */
+/* Mock Wikipedii. Fixtury geosearch zależą od promienia (500 m → nic, 1 km → 6, 3 km → 9, 5 km → 11, 10 km → 14 miejsc;
+   kolejne pierścienie zawierają miejsca poprzednich, co sprawdza odfiltrowanie duplikatów).
+   Opcje: geosearchFailures (ile pierwszych geosearch ma zwrócić 500), empty (zawsze 0 wyników),
+   failRadius (promień, którego pierwsze zapytanie zwraca 500), slowRadius + slowMs (opóźnienie odpowiedzi dla promienia). */
 async function mockWikipedia(page, options = {}) {
-  const opts = { geosearchFailures: 0, empty: false, ...options };
+  const opts = { geosearchFailures: 0, empty: false, failRadius: null, slowRadius: null, slowMs: 1200, ...options };
   const log = { requests: [] };
 
   await page.route(/^https:\/\/fonts\.(googleapis|gstatic)\.com\//, (route) =>
@@ -50,7 +58,7 @@ async function mockWikipedia(page, options = {}) {
     });
   });
 
-  await page.route('https://pl.wikipedia.org/**', (route) => {
+  await page.route('https://pl.wikipedia.org/**', async (route) => {
     const url = new URL(route.request().url());
     log.requests.push(url.href);
 
@@ -74,15 +82,18 @@ async function mockWikipedia(page, options = {}) {
       expect(p.get('origin')).toBe('*');
 
       if (p.get('list') === 'geosearch') {
-        if (opts.geosearchFailures > 0) {
-          opts.geosearchFailures -= 1;
-          return route.fulfill({ status: 500, contentType: 'text/html', headers: { 'access-control-allow-origin': '*' }, body: 'Internal Server Error' });
-        }
-        if (opts.empty) return route.fulfill(json(FIX.gEmpty));
         const radius = Number(p.get('gsradius'));
+        const fail = () => route.fulfill({ status: 500, contentType: 'text/html', headers: { 'access-control-allow-origin': '*' }, body: 'Internal Server Error' });
+        if (opts.geosearchFailures > 0) { opts.geosearchFailures -= 1; return fail(); }
+        if (opts.failRadius === radius) { opts.failRadius = null; return fail(); }
+        if (opts.slowRadius === radius) await sleep(opts.slowMs);
+        if (opts.empty) return route.fulfill(json(FIX.gEmpty));
         if ((p.get('gscoord') || '').startsWith('50.06')) return route.fulfill(json(FIX.gKrakow));
-        if (radius <= 500) return route.fulfill(json(FIX.gEmpty));
-        return route.fulfill(json(radius >= 3000 ? FIX.g3000 : FIX.g1000));
+        if (radius >= 10000) return route.fulfill(json(FIX.g10000));
+        if (radius >= 5000) return route.fulfill(json(FIX.g5000));
+        if (radius >= 3000) return route.fulfill(json(FIX.g3000));
+        if (radius >= 1000) return route.fulfill(json(FIX.g1000));
+        return route.fulfill(json(FIX.gEmpty));
       }
       if (p.get('prop') === 'extracts|pageimages') {
         const pages = (p.get('pageids') || '').split('|').map((id) => FIX.extracts[id]).filter(Boolean);
@@ -101,7 +112,7 @@ async function mockWikipedia(page, options = {}) {
 
 /* Każdy test zbiera błędy konsoli i pageerror; niepuste = test oblany.
    Dozwolone są wyłącznie wpisy „Failed to load resource” dla odpowiedzi, które mock celowo zwraca jako błąd
-   (REST 404 dla jednej strony → ścieżka zapasowa; 500 w teście błędu API). */
+   (REST 404 dla jednej strony → ścieżka zapasowa; 500 w testach błędu API). */
 const test = base.extend({
   consoleErrors: [async ({ page }, use) => {
     const errors = [];
@@ -117,6 +128,22 @@ const test = base.extend({
 });
 
 const shot = (testInfo, name) => join(ARTIFACTS, `${testInfo.project.name}-${name}.png`);
+
+/* Promienie wszystkich dotychczasowych zapytań geosearch, w kolejności. */
+const geoRadii = (log) => log.requests.map((u) => new URL(u)).filter((u) => u.searchParams.get('list') === 'geosearch').map((u) => u.searchParams.get('gsradius'));
+
+/* Kolejność elementów feedu: 'card' | 'ring-card:1000' | 'loading-card' | 'end-card'. */
+const feedOrder = (page) => page.evaluate(() => [...document.querySelectorAll('#feed > *')]
+  .map((el) => el.dataset.testid + (el.dataset.radius ? `:${el.dataset.radius}` : '')));
+
+const placeIds = (page) => page.evaluate(() => window.WM.state.places.map((p) => p.pageid));
+
+/* Odpowiada hakiem testowym po kolei na podane miejsca: [[pageid, known], …]. */
+async function answerIds(page, answers) {
+  for (const pair of answers) {
+    await page.evaluate(([pageid, known]) => window.WM.answer(pageid, known), pair);
+  }
+}
 
 async function expectNoHorizontalScroll(page) {
   const m = await page.evaluate(() => ({
@@ -157,27 +184,28 @@ async function startFeed(page, options) {
 test.describe('Wokół mnie — smoke', () => {
   test.use({ geolocation: WARSAW, permissions: ['geolocation'] });
 
-  test('ekran startowy: 4 chipsy promienia, domyślnie 1 km', async ({ page }, testInfo) => {
+  test('ekran startowy: 5 chipsów promienia startowego, domyślnie 1 km', async ({ page }, testInfo) => {
     await mockWikipedia(page);
     await page.goto('./');
     await expect(page.getByTestId('start-screen')).toBeVisible();
     await expect(page.getByRole('heading', { level: 1, name: 'Wokół mnie' })).toBeVisible();
     await expect(page.getByText('Co ciekawego jest kilkaset metrów od ciebie?')).toBeVisible();
-    for (const r of [500, 1000, 3000, 5000]) {
+    for (const r of [500, 1000, 3000, 5000, 10000]) {
       await expect(page.getByTestId(`radius-chip-${r}`)).toBeVisible();
     }
     await expect(page.getByTestId('radius-chip-1000')).toHaveAttribute('aria-checked', 'true');
-    for (const r of [500, 3000, 5000]) {
+    for (const r of [500, 3000, 5000, 10000]) {
       await expect(page.getByTestId(`radius-chip-${r}`)).toHaveAttribute('aria-checked', 'false');
     }
     await expect(page.getByTestId('radius-chip-1000')).toHaveText('1 km');
+    await expect(page.getByTestId('radius-chip-10000')).toHaveText('10 km');
     await expect(page.getByTestId('start-button')).toBeVisible();
     await expect(page.getByTestId('start-button')).toHaveText(/Pokaż, co jest wokół/);
     await expectNoHorizontalScroll(page);
     await page.screenshot({ path: shot(testInfo, '01-start') });
   });
 
-  test('ścieżka GPS: ładuje co najmniej jedną kartę w ciągu 10 s', async ({ page, context }) => {
+  test('ścieżka GPS: ładuje co najmniej jedną kartę w ciągu 10 s; tylko pierścień startowy', async ({ page, context }) => {
     const log = await mockWikipedia(page);
     await context.setGeolocation(WARSAW);
     await page.goto('./');
@@ -197,9 +225,12 @@ test.describe('Wokół mnie — smoke', () => {
     expect(geo.searchParams.get('gsnamespace')).toBe('0');
     const state = await page.evaluate(() => ({ screen: window.WM.state.screen, n: window.WM.state.places.length, radius: window.WM.state.radius }));
     expect(state).toEqual({ screen: 'feed', n: 6, radius: 1000 });
+    // Na pierwszej karcie następny pierścień jeszcze nie jest pobierany; na końcu feedu stoi karta ładowania.
+    expect(geoRadii(log)).toEqual(['1000']);
+    expect(await feedOrder(page)).toEqual(['card', 'card', 'card', 'card', 'card', 'card', 'ring-card:1000', 'loading-card']);
   });
 
-  test('karta: tytuł, odległość, ekstrakt, zdjęcie albo placeholder', async ({ page }, testInfo) => {
+  test('karta: tytuł, odległość, ekstrakt, zdjęcie albo placeholder, linki „Czytaj w Wikipedii” i „Nawiguj”', async ({ page }, testInfo) => {
     await startFeed(page);
     const cards = page.getByTestId('card');
     const first = cards.first();
@@ -218,6 +249,21 @@ test.describe('Wokół mnie — smoke', () => {
     await expect(link).toHaveAttribute('href', 'https://pl.m.wikipedia.org/wiki/Kolumna_Zygmunta_III_Wazy_w_Warszawie');
     await expect(link).toHaveAttribute('target', '_blank');
     await expect(link).toHaveAttribute('rel', /noopener/);
+
+    // „Nawiguj”: trasa piesza w Mapach Google; współrzędne z REST (dokładniejsze) mają pierwszeństwo przed geosearch.
+    const nav = first.getByTestId('card-navigate');
+    await expect(nav).toHaveText(/Nawiguj/);
+    await expect(nav).toHaveAttribute('href', 'https://www.google.com/maps/dir/?api=1&destination=52.24761,21.01413&travelmode=walking');
+    await expect(nav).toHaveAttribute('href', NAVIGATE_RE);
+    await expect(nav).toHaveAttribute('target', '_blank');
+    await expect(nav).toHaveAttribute('rel', /noopener/);
+    await expect(nav).toHaveAttribute('aria-label', 'Nawiguj do: Kolumna Zygmunta III Wazy w Warszawie');
+    // Strona bez współrzędnych w REST → współrzędne z geosearch (52.2479, 21.015), kropka dziesiętna, 5 miejsc.
+    await expect(cards.nth(1).getByTestId('card-navigate')).toHaveAttribute('href', 'https://www.google.com/maps/dir/?api=1&destination=52.24790,21.01500&travelmode=walking');
+    const [linkBox, navBox] = [await link.boundingBox(), await nav.boundingBox()];
+    expect(Math.abs(linkBox.y - navBox.y), 'oba linki w jednym rzędzie').toBeLessThan(2);
+    expect(navBox.x).toBeGreaterThan(linkBox.x + linkBox.width);
+
     await expect(first.getByTestId('btn-known')).toBeVisible();
     await expect(first.getByTestId('btn-unknown')).toBeVisible();
     for (const id of ['btn-known', 'btn-unknown']) {
@@ -340,12 +386,13 @@ test.describe('Wokół mnie — smoke', () => {
     await expect(current).toHaveAttribute('data-answer', 'false');
   });
 
-  test('zmiana promienia ponawia geosearch z nowym gsradius', async ({ page }) => {
+  test('zmiana promienia startowego ponawia geosearch z nowym gsradius (gslimit 500 od 3 km)', async ({ page }) => {
     await startFeed(page);
     const request = page.waitForRequest((r) => /list=geosearch/.test(r.url()) && /gsradius=3000/.test(r.url()));
     await page.getByTestId('radius-chip-3000').click();
     const url = new URL((await request).url());
     expect(url.searchParams.get('gsradius')).toBe('3000');
+    expect(url.searchParams.get('gslimit')).toBe('500');
     expect(url.searchParams.get('gscoord')).toBe('52.2497|21.0122');
     await expect(page.getByTestId('radius-chip-3000')).toHaveAttribute('aria-checked', 'true');
     await expect(page.getByTestId('radius-chip-1000')).toHaveAttribute('aria-checked', 'false');
@@ -353,68 +400,217 @@ test.describe('Wokół mnie — smoke', () => {
     await expect(page.getByTestId('progress')).toHaveText('1 z 9 · znasz 0');
     await expect(page.getByTestId('card').nth(6).getByTestId('card-distance')).toHaveText('1,4 km stąd');
     expect(await page.evaluate(() => localStorage.getItem('wm.radius'))).toBe('3000');
+    expect(await feedOrder(page)).toEqual([...Array(9).fill('card'), 'ring-card:3000', 'loading-card']);
   });
 
-  test('wszystkie karty → karta końcowa, procent i kopiowanie do schowka', async ({ page, context }, testInfo) => {
+  test('pierścienie: karta pierścienia po 1 km, dociąganie 3 → 5 → 10 km bez duplikatów, karta końcowa', async ({ page, context }, testInfo) => {
     await context.grantPermissions(['geolocation', 'clipboard-read', 'clipboard-write']);
-    await startFeed(page);
-    const ids = await page.evaluate(() => window.WM.state.places.map((p) => p.pageid));
-    expect(ids).toHaveLength(6);
+    const log = await startFeed(page);
+    expect(await placeIds(page)).toEqual(IDS_1000);
+    await expect(page.getByTestId('progress')).toHaveText('1 z 6 · znasz 0');
     // Pięć odpowiedzi hakiem (jedna „nie wiedziałem”), ostatnia przyciskiem.
-    for (const [i, id] of ids.slice(0, 5).entries()) {
-      await page.evaluate(([pageid, known]) => window.WM.answer(pageid, known), [id, i !== 1]);
-    }
-    const last = page.getByTestId('card').last();
+    const ringRequest = page.waitForRequest((r) => /list=geosearch/.test(r.url()) && /gsradius=3000/.test(r.url()));
+    await answerIds(page, IDS_1000.slice(0, 5).map((id, i) => [id, i !== 1]));
+    const last = page.getByTestId('card').nth(5);
     await expect(last).toBeInViewport({ ratio: 0.9 });
-    await expect(page.getByTestId('progress')).toHaveText('6 z 6 · znasz 4');
+
+    // Dojście na 2 karty przed koniec dociąga 3 km, zanim padnie ostatnia odpowiedź: gsradius=3000 z gslimit=500;
+    // nowe karty za kartą pierścienia; duplikaty z 1 km odfiltrowane; (f) licznik rośnie o doklejony pierścień.
+    const url = new URL((await ringRequest).url());
+    expect(url.searchParams.get('gslimit')).toBe('500');
+    expect(url.searchParams.get('gscoord')).toBe('52.2497|21.0122');
+    await expect(page.getByTestId('card')).toHaveCount(9);
+    expect(await feedOrder(page)).toEqual([...Array(6).fill('card'), 'ring-card:1000', 'card', 'card', 'card', 'ring-card:3000', 'loading-card']);
+    const after = await placeIds(page);
+    expect(after).toEqual([...IDS_1000, 62340, 17788, 29031]);
+    expect(new Set(after).size).toBe(after.length);
+    await expect(page.getByTestId('card').nth(6).getByTestId('card-distance')).toHaveText('1,4 km stąd');
+    await expect(page.getByTestId('progress')).toHaveText('6 z 9 · znasz 4');
     await last.getByTestId('btn-known').click();
 
+    // (a) Karta pierścienia 1 km: wynik pierścienia, „Udostępnij”, zapowiedź następnego pierścienia, bez przycisku „Dalej”.
+    const ring = page.getByTestId('ring-card').first();
+    await expect(ring).toBeInViewport({ ratio: 0.9 });
+    await expect(ring).toHaveAttribute('data-radius', '1000');
+    await expect(ring).toContainText('To wszystko w promieniu 1 km');
+    await expect(ring).toContainText('Znasz 83% (5 z 6 miejsc)');
+    await expect(ring.locator('.end-percent-num')).toHaveText('83');
+    await expect(ring).toContainText('Dalej: miejsca 1–3 km stąd');
+    await expect(ring.getByRole('button')).toHaveCount(1);
+    await expect(ring.getByTestId('ring-share')).toHaveText(/Udostępnij/);
+    // Na karcie pierścienia licznik pokazuje numer ostatniej karty miejsca.
+    await expect(page.getByTestId('progress')).toHaveText('6 z 9 · znasz 5');
+    await page.screenshot({ path: shot(testInfo, '03-ring') });
+
+    // Udostępnienie wyniku pierścienia (fallback: schowek + toast).
+    await ring.getByTestId('ring-share').click();
+    await expect(page.locator('#toast')).toHaveText('Skopiowano');
+    const pageUrl = page.url().split('#')[0];
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(`Znam 83% miejsc w promieniu 1 km od siebie. Sprawdź swoją okolicę: ${pageUrl}`);
+
+    // 3 km: 2 z 3 → 67 %; 5 km: 2 nowe; 10 km: 3 nowe (Cytadela 2,2 km w kolejności z API, lotnisko, Wilanów).
+    await answerIds(page, [[62340, true], [17788, false], [29031, true]]);
+    const ring3 = page.getByTestId('ring-card').nth(1);
+    await expect(ring3).toContainText('Znasz 67% (2 z 3 miejsc)');
+    await expect(ring3).toContainText('Dalej: miejsca 3–5 km stąd');
+    await expect(page.getByTestId('card')).toHaveCount(11);
+    expect((await placeIds(page)).slice(9)).toEqual([55870, 40120]);
+    await answerIds(page, [[55870, true], [40120, false]]);
+    await expect(page.getByTestId('ring-card').nth(2)).toContainText('Znasz 50% (1 z 2 miejsc)');
+    await expect(page.getByTestId('card')).toHaveCount(14);
+    expect((await placeIds(page)).slice(11)).toEqual([73111, 71230, 68001]);
+    await expect(page.getByTestId('card').nth(11).getByTestId('card-distance')).toHaveText('2,2 km stąd');
+    await expect(page.getByTestId('card').nth(13).getByTestId('card-distance')).toHaveText('9,1 km stąd');
+    await answerIds(page, [[73111, true], [71230, true], [68001, false]]);
+
+    // (c) Karta końcowa po pierścieniu 10 km: wynik łączny, trzy przyciski, bez „Zwiększ promień”.
     const end = page.getByTestId('end-card');
     await expect(end).toBeInViewport({ ratio: 0.9 });
-    await expect(end).toContainText('Znasz 83% okolicy w promieniu 1 km');
-    await expect(end).toContainText('Wiedziałeś o 5 z 6 miejsc');
-    await expect(end.locator('.end-percent-num')).toHaveText('83');
-    await expect(page.getByTestId('progress')).toHaveText('6 z 6 · znasz 5');
-    await expect(end.getByRole('button', { name: 'Zwiększ promień' })).toBeVisible();
+    await expect(page.getByTestId('ring-card')).toHaveCount(3);
+    await expect(page.getByTestId('loading-card')).toHaveCount(0);
+    await expect(end).toContainText('To wszystko, co Wikipedia zna w promieniu 10 km');
+    await expect(end).toContainText('Znasz 71% (10 z 14 miejsc)');
+    await expect(end.locator('.end-percent-num')).toHaveText('71');
+    await expect(page.getByTestId('progress')).toHaveText('14 z 14 · znasz 10');
+    await expect(end.getByRole('button', { name: 'Udostępnij' })).toBeVisible();
+    await expect(end.getByRole('button', { name: 'Zmień miejsce' })).toBeVisible();
     await expect(end.getByRole('button', { name: 'Jeszcze raz' })).toBeVisible();
-    await page.screenshot({ path: shot(testInfo, '03-end') });
+    await expect(end.getByRole('button', { name: 'Zwiększ promień' })).toHaveCount(0);
+    expect(geoRadii(log)).toEqual(['1000', '3000', '5000', '10000']);
+    await page.screenshot({ path: shot(testInfo, '03b-end') });
 
     await page.getByTestId('share-button').click();
     await expect(page.locator('#toast')).toHaveText('Skopiowano');
-    const clipboard = await page.evaluate(() => navigator.clipboard.readText());
-    const url = page.url().split('#')[0];
-    expect(clipboard).toBe(`Znam 83% miejsc w promieniu 1 km od siebie. Sprawdź swoją okolicę: ${url}`);
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(`Znam 71% miejsc w promieniu 10 km od siebie. Sprawdź swoją okolicę: ${pageUrl}`);
 
-    // „Jeszcze raz” czyści odpowiedzi dla tej listy i wraca na początek.
+    // „Jeszcze raz” czyści odpowiedzi wszystkich załadowanych pierścieni i wraca na pierwszą kartę.
     await end.getByRole('button', { name: 'Jeszcze raz' }).click();
     await expect(page.getByTestId('card').first()).toBeInViewport({ ratio: 0.9 });
-    await expect(page.getByTestId('progress')).toHaveText('1 z 6 · znasz 0');
+    await expect(page.getByTestId('progress')).toHaveText('1 z 14 · znasz 0');
     expect(await page.evaluate(() => JSON.parse(localStorage.getItem('wm.answers')))).toEqual({});
     await expect(page.getByTestId('card').first()).not.toHaveAttribute('data-answer', /.+/);
+    expect(await page.locator('.card.is-answered').count()).toBe(0);
+    await expect(ring).toContainText('Przewinąłeś 6 miejsc w promieniu 1 km');
   });
 
-  test('0 wyników → stan pusty, zmiana promienia wraca do kart', async ({ page }, testInfo) => {
-    await mockWikipedia(page, { empty: true });
+  test('przewinięcie na koniec bez odpowiedzi dociąga następny pierścień; karta pierścienia mówi „Przewinąłeś…”', async ({ page }, testInfo) => {
+    const log = await startFeed(page, { slowRadius: 3000, slowMs: 1500 });
+    expect(geoRadii(log)).toEqual(['1000']);
+    // (b) Ostatnia karta w widoku → zapytanie o 3 km; w tym czasie na końcu feedu karta ładowania.
+    await page.evaluate(() => document.querySelectorAll('[data-testid="card"]')[5].scrollIntoView());
+    await expect.poll(() => geoRadii(log)).toEqual(['1000', '3000']);
+    const loading = page.getByTestId('loading-card');
+    await expect(loading).toContainText('Szukam miejsc 1–3 km stąd…');
+    await expect(page.getByTestId('feed')).toHaveAttribute('aria-busy', 'true');
+    const ring = page.getByTestId('ring-card').first();
+    await expect(ring).toContainText('Przewinąłeś 6 miejsc w promieniu 1 km');
+    await expect(ring.locator('.end-meter')).toBeHidden();
+    await expect(ring.getByTestId('ring-share')).toBeHidden();
+    await expect(ring).toContainText('Dalej: miejsca 1–3 km stąd');
+    await page.evaluate(() => document.querySelector('[data-testid="ring-card"]').scrollIntoView());
+    await expect(ring).toBeInViewport({ ratio: 0.9 });
+    await page.screenshot({ path: shot(testInfo, '03c-ring-scrolled') });
+    await expect(page.getByTestId('card')).toHaveCount(9);
+    await expect(page.getByTestId('feed')).toHaveAttribute('aria-busy', 'false');
+    await expect(page.getByTestId('progress')).toHaveText('6 z 9 · znasz 0');
+    expect(await feedOrder(page)).toEqual([...Array(6).fill('card'), 'ring-card:1000', 'card', 'card', 'card', 'ring-card:3000', 'loading-card']);
+    // Pierwsza doklejona karta jest zaraz za kartą pierścienia; odpowiedź na niej aktualizuje kartę pierścienia 3 km.
+    await page.evaluate(() => window.WM.answer(62340, true));
+    await expect(page.getByTestId('ring-card').nth(1)).toContainText('Znasz 33% (1 z 3 miejsc)');
+    // Po odpowiedzi widok idzie na 8. kartę — 2 karty przed końcem, więc w tle dociąga się już 5 km (suma 9 → 11).
+    await expect(page.getByTestId('progress')).toHaveText(/^8 z (9|11) · znasz 1$/);
+    await expect(page.getByTestId('card')).toHaveCount(11);
+  });
+
+  test('błąd przy dociąganiu pierścienia → karta błędu w feedzie, „Spróbuj ponownie” tylko dla tego pierścienia', async ({ page, consoleErrors }, testInfo) => {
+    consoleErrors.allow.push(/Failed to load resource.*list=geosearch/);
+    const log = await startFeed(page, { failRadius: 3000 });
+    await page.evaluate(() => document.querySelectorAll('[data-testid="card"]')[5].scrollIntoView());
+    const error = page.getByTestId('ring-error');
+    await expect(error).toBeVisible();
+    await expect(error).toContainText('Wikipedia odpowiedziała błędem (500). Odczekaj chwilę i spróbuj ponownie.');
+    await expect(page.getByTestId('error-state')).toBeHidden();
+    await expect(page.getByTestId('card')).toHaveCount(6);
+    await page.evaluate(() => document.querySelector('[data-testid="loading-card"]').scrollIntoView());
+    await page.screenshot({ path: shot(testInfo, '05b-ring-error') });
+    await page.getByTestId('ring-retry').click();
+    await expect(page.getByTestId('card')).toHaveCount(9);
+    await expect(error).toBeHidden();
+    expect(geoRadii(log)).toEqual(['1000', '3000', '3000']);
+  });
+
+  test('odpowiedzi z poprzedniej sesji: po ponownym starcie feed zaczyna od karty pierścienia i dociąga następny', async ({ page }) => {
+    await startFeed(page);
+    await page.evaluate(() => { for (const p of window.WM.state.places) window.WM.answer(p.pageid, p.pageid !== 123); });
+    await expect(page.getByTestId('ring-card').first()).toBeInViewport({ ratio: 0.9 });
+    await expect(page.getByTestId('card')).toHaveCount(9);
+    await page.reload();
+    await page.getByTestId('start-button').click();
+    const ring = page.getByTestId('ring-card').first();
+    await expect(ring).toBeInViewport({ ratio: 0.9 });
+    await expect(ring).toContainText('Znasz 83% (5 z 6 miejsc)');
+    await expect(page.getByTestId('card').first()).toHaveAttribute('data-answer', 'true');
+    await expect(page.getByTestId('card').nth(1)).toHaveAttribute('data-answer', 'false');
+    await expect(page.getByTestId('card')).toHaveCount(9);
+    await expect(page.getByTestId('card').nth(6)).not.toHaveAttribute('data-answer', /.+/);
+    await expect(page.getByTestId('progress')).toHaveText('6 z 9 · znasz 5');
+  });
+
+  test('pusty pierścień startowy 500 m → karta „nic nie ma”, dalej automatycznie 1 km, bez stanu pustego', async ({ page }, testInfo) => {
+    const log = await mockWikipedia(page);
+    await page.goto('./');
+    await page.getByTestId('radius-chip-500').click();
+    await expect(page.getByTestId('radius-chip-500')).toHaveAttribute('aria-checked', 'true');
+    await page.getByTestId('start-button').click();
+    // (d) Karta pierścienia zamiast stanu pustego; 1 km dociąga się od razu.
+    const ring = page.getByTestId('ring-card').first();
+    await expect(ring).toBeInViewport({ ratio: 0.9 });
+    await expect(ring).toHaveAttribute('data-radius', '500');
+    await expect(ring).toContainText('W promieniu 500 m nic nie ma');
+    await expect(ring).toContainText('Dalej: miejsca 500 m–1 km stąd');
+    await expect(ring.locator('.end-meter')).toBeHidden();
+    await expect(page.getByTestId('empty-state')).toBeHidden();
+    await expect(page.getByTestId('card')).toHaveCount(6);
+    await expect(page.getByTestId('progress')).toHaveText('1 z 6 · znasz 0');
+    expect(await feedOrder(page)).toEqual(['ring-card:500', ...Array(6).fill('card'), 'ring-card:1000', 'loading-card']);
+    expect(geoRadii(log)).toEqual(['500', '1000']);
+    expect(await page.evaluate(() => [window.WM.state.radius, localStorage.getItem('wm.radius')])).toEqual([500, '500']);
+    await page.screenshot({ path: shot(testInfo, '04-empty-ring') });
+    await page.getByTestId('card').first().scrollIntoViewIfNeeded();
+    await expect(page.getByTestId('card').first()).toBeInViewport({ ratio: 0.9 });
+    await expect(page.getByTestId('card').first().getByTestId('card-distance')).toHaveText('90 m stąd');
+  });
+
+  test('promień 500 m w feedzie → karta „nic nie ma” i karty z 1 km; chip 3 km → 9 kart', async ({ page }) => {
+    await startFeed(page);
+    await page.getByTestId('radius-chip-500').click();
+    const ring = page.getByTestId('ring-card').first();
+    await expect(ring).toContainText('W promieniu 500 m nic nie ma');
+    await expect(page.getByTestId('empty-state')).toBeHidden();
+    await expect(page.getByTestId('card')).toHaveCount(6);
+    await page.getByTestId('radius-chip-3000').click();
+    await expect(page.getByTestId('card')).toHaveCount(9);
+    await expect(page.getByTestId('ring-card')).toHaveCount(1);
+    await expect(page.getByTestId('ring-card').first()).toHaveAttribute('data-radius', '3000');
+    await expect(page.getByTestId('progress')).toHaveText('1 z 9 · znasz 0');
+    expect(await page.evaluate(() => localStorage.getItem('wm.radius'))).toBe('3000');
+  });
+
+  test('0 wyników we wszystkich pierścieniach → stan pusty dopiero po 10 km', async ({ page }, testInfo) => {
+    const log = await mockWikipedia(page, { empty: true });
     await page.goto('./');
     await page.getByTestId('start-button').click();
+    // (e) Dopóki są dalsze pierścienie, nie ma stanu pustego; po 10 km — komunikat ze „Zmień miejsce”.
     const empty = page.getByTestId('empty-state');
     await expect(empty).toBeVisible();
-    await expect(empty).toContainText('W promieniu 1 km Wikipedia nie zna żadnego miejsca. Zwiększ promień.');
+    await expect(empty).toContainText('Wikipedia nie zna żadnego miejsca w promieniu 10 km od tego punktu. Zmień miejsce.');
     await expect(empty.getByTestId('radius-chip-3000')).toBeVisible();
     await expect(page.getByTestId('feed')).toBeHidden();
     await expect(page.getByTestId('error-state')).toBeHidden();
+    expect(geoRadii(log)).toEqual(['1000', '3000', '5000', '10000']);
     await page.screenshot({ path: shot(testInfo, '04-empty') });
-  });
-
-  test('promień 500 m bez wyników → stan pusty → 3 km → karty', async ({ page }) => {
-    await startFeed(page);
-    await page.getByTestId('radius-chip-500').click();
-    const empty = page.getByTestId('empty-state');
-    await expect(empty).toBeVisible();
-    await expect(empty).toContainText('W promieniu 500 m Wikipedia nie zna żadnego miejsca.');
-    await empty.getByTestId('radius-chip-3000').click();
-    await expect(page.getByTestId('feed')).toBeVisible();
-    await expect(page.getByTestId('card')).toHaveCount(9);
+    await page.getByTestId('change-place').click();
+    await expect(page.getByTestId('start-screen')).toBeVisible();
     await expect(empty).toBeHidden();
   });
 
@@ -500,6 +696,7 @@ test.describe('bez zgody na lokalizację', () => {
     await expect(first).toBeVisible();
     await expect(first.getByTestId('card-title')).toHaveText('Sukiennice w Krakowie');
     await expect(first.getByTestId('card-distance')).toHaveText(DISTANCE_RE);
+    await expect(first.getByTestId('card-navigate')).toHaveAttribute('href', NAVIGATE_RE);
     await expect(page.getByTestId('card')).toHaveCount(4);
     await page.screenshot({ path: shot(testInfo, '07-place-feed') });
   });

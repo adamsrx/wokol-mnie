@@ -1,5 +1,5 @@
 // QA: UX mobilny (360×640, 430×932), strefy bezpieczne, kontrast na jasnym zdjęciu, dostępność, teksty.
-import { test, expect, mockWiki, startFeed, makePlaces, WARSAW, shot, sleep } from './helpers.mjs';
+import { test, expect, mockWiki, startFeed, makePlaces, answerAllRings, WARSAW, shot, sleep } from './helpers.mjs';
 
 test.describe('QA: UX i dostępność', () => {
   test.use({ geolocation: WARSAW, permissions: ['geolocation'] });
@@ -50,9 +50,21 @@ test.describe('QA: UX i dostępność', () => {
     expect.soft(c.title.contrast, 'tytuł na jasnym zdjęciu (duży tekst, min 3:1)').toBeGreaterThanOrEqual(3);
     expect.soft(c.extract.contrast, 'opis na jasnym zdjęciu (min 4,5:1)').toBeGreaterThanOrEqual(4.5);
 
-    await page.evaluate(() => { for (const p of window.WM.state.places) window.WM.answer(p.pageid, true); });
+    // v0.1: feed ciągnie się przez pierścienie do 10 km — odpowiadamy na wszystko, aż się zamknie, i wchodzimy na kartę końcową.
+    await answerAllRings(page);
     const end = page.getByTestId('end-card');
+    await end.scrollIntoViewIfNeeded();
     await expect(end).toBeInViewport({ ratio: 0.9, timeout: 15_000 });
+    const ringCard = page.getByTestId('ring-card').first();
+    await ringCard.scrollIntoViewIfNeeded();
+    await expect(ringCard).toBeInViewport({ ratio: 0.9 });
+    const ringShare = await ringCard.getByTestId('ring-share').boundingBox();
+    const ringNext = await ringCard.locator('.ring-next').boundingBox();
+    console.log(`[QA ${testInfo.project.name}] karta pierścienia z wcięciami: „Udostępnij” do y=${Math.round(ringShare.y + ringShare.height)}, „Dalej” do y=${Math.round(ringNext.y + ringNext.height)} / ${vp.height}`);
+    await page.screenshot({ path: shot(testInfo, 'ring-safe-area') });
+    expect.soft(ringNext.y + ringNext.height, '„Dalej” na karcie pierścienia nad wcięciem dolnym').toBeLessThanOrEqual(vp.height - 34 + 1);
+    await end.scrollIntoViewIfNeeded();
+    await expect(end).toBeInViewport({ ratio: 0.9 });
     const again = await end.getByRole('button', { name: 'Jeszcze raz' }).boundingBox();
     const meter = await end.locator('.end-meter').boundingBox();
     const topbar = await page.locator('#topbar').boundingBox();
@@ -77,10 +89,14 @@ test.describe('QA: UX i dostępność', () => {
     await check('feed');
     const known = await page.getByTestId('card').first().getByTestId('btn-known').boundingBox();
     expect(known.y + known.height).toBeLessThanOrEqual(vp.height);
+    // v0.1: pusty pierścień startowy nie daje stanu pustego — jest karta „nic nie ma” i automatyczne dociągnięcie 1 km.
     await page.getByTestId('radius-chip-500').click();
-    await expect(page.getByTestId('empty-state')).toBeVisible();
-    await check('empty');
-    await page.screenshot({ path: shot(testInfo, 'empty') });
+    const ring = page.getByTestId('ring-card').first();
+    await expect(ring).toBeVisible();
+    await expect(ring).toContainText('W promieniu 500 m nic nie ma');
+    await expect(page.getByTestId('empty-state')).toBeHidden();
+    await check('ring');
+    await page.screenshot({ path: shot(testInfo, 'empty-ring') });
     await page.getByTestId('change-place').click();
     await page.locator('#place-toggle').click();
     await check('start+form');
@@ -94,11 +110,12 @@ test.describe('QA: UX i dostępność', () => {
     const chips = page.locator('.chips');
     await expect(chips).toHaveAttribute('role', 'radiogroup');
     await expect(chips).toHaveAttribute('aria-label', 'Promień');
-    await expect(page.locator('.chip')).toHaveCount(4);
-    for (const r of [500, 1000, 3000, 5000]) await expect(page.getByTestId(`radius-chip-${r}`)).toHaveAttribute('role', 'radio');
+    await expect(page.locator('.chip')).toHaveCount(5);
+    for (const r of [500, 1000, 3000, 5000, 10000]) await expect(page.getByTestId(`radius-chip-${r}`)).toHaveAttribute('role', 'radio');
     const unnamed = await page.evaluate(() => [...document.querySelectorAll('button')].filter((b) => !(b.getAttribute('aria-label') || b.textContent.trim())).map((b) => b.outerHTML.slice(0, 80)));
     expect(unnamed).toEqual([]);
-    await expect(page.getByTestId('card').first().getByRole('link')).toHaveAttribute('aria-label', /^Czytaj w Wikipedii: /);
+    await expect(page.getByTestId('card').first().getByRole('link', { name: /^Czytaj w Wikipedii/ })).toHaveAttribute('aria-label', /^Czytaj w Wikipedii: /);
+    await expect(page.getByTestId('card').first().getByTestId('card-navigate')).toHaveAttribute('aria-label', /^Nawiguj do: /);
     const landmarks = await page.evaluate(() => ({ feedRole: document.getElementById('feed').getAttribute('role'), main: !!document.querySelector('main'), h1: document.querySelectorAll('h1').length }));
     console.log(`[QA] landmarki: ${JSON.stringify(landmarks)} (aria-label na div bez roli nie jest czytany)`);
     const durations = await page.evaluate(() => ({
@@ -139,27 +156,35 @@ test.describe('QA: UX i dostępność', () => {
     const texts = [];
     const grab = async () => texts.push(await page.evaluate(() => document.body.innerText));
     await grab();
-    // 2 miejsca (1 km): „z 2 miejsc”
-    await page.evaluate(() => { for (const p of window.WM.state.places) window.WM.answer(p.pageid, true); });
-    await expect(page.getByTestId('end-card')).toBeInViewport({ ratio: 0.9 });
-    await expect(page.getByTestId('end-card')).toContainText('Wiedziałeś o 2 z 2 miejsc');
-    await expect(page.getByTestId('end-card')).toContainText('Znasz 100% okolicy w promieniu 1 km');
+    // v0.1: wynik pierścienia jest na karcie pierścienia, wynik łączny — na karcie końcowej po 10 km.
+    // 2 miejsca (1 km): „z 2 miejsc” (pierścień 3 km dociąga się od razu, więc odpowiadamy tylko na miejsca z 1 km)
+    await page.evaluate(() => { window.WM.answer(8000, true); window.WM.answer(8001, true); });
+    const ring1 = page.locator('[data-testid="ring-card"][data-radius="1000"]');
+    await expect(ring1).toBeInViewport({ ratio: 0.9 });
+    await expect(ring1).toContainText('Znasz 100% (2 z 2 miejsc)');
+    await expect(ring1).toContainText('To wszystko w promieniu 1 km');
     await grab();
-    // 1 miejsce (500 m): „z 1 miejsca”
+    // 1 miejsce (500 m): „z 1 miejsca” (pierścień 1 km dociąga się automatycznie, więc kart przybywa)
     await page.getByTestId('radius-chip-500').click();
-    await expect(page.getByTestId('card')).toHaveCount(1);
-    await page.evaluate(() => window.WM.answer(window.WM.state.places[0].pageid, false));
-    await expect(page.getByTestId('end-card')).toBeInViewport({ ratio: 0.9 });
-    await expect(page.getByTestId('end-card')).toContainText('Wiedziałeś o 0 z 1 miejsca');
-    await expect(page.getByTestId('end-card')).toContainText('Znasz 0% okolicy w promieniu 500 m');
+    await expect(page.getByTestId('card').first().getByTestId('card-title')).toHaveText('Miejsce 1');
+    await page.evaluate(() => window.WM.answer(7000, false));
+    const ring500 = page.locator('[data-testid="ring-card"][data-radius="500"]');
+    await expect(ring500).toBeInViewport({ ratio: 0.9 });
+    await expect(ring500).toContainText('Znasz 0% (0 z 1 miejsca)');
+    await expect(ring500).toContainText('Dalej: miejsca 500 m–1 km stąd');
     await grab();
-    // 5 miejsc (3 km), 2 znane → 40%
+    // 5 miejsc (3 km), 2 znane → 40%; dalsze pierścienie nic nie wnoszą → karta końcowa z tym samym wynikiem łącznym
     await page.getByTestId('radius-chip-3000').click();
     await expect(page.getByTestId('card')).toHaveCount(5);
     await page.evaluate(() => window.WM.state.places.forEach((p, i) => window.WM.answer(p.pageid, i < 2)));
-    await expect(page.getByTestId('end-card')).toBeInViewport({ ratio: 0.9 });
-    await expect(page.getByTestId('end-card')).toContainText('Znasz 40% okolicy w promieniu 3 km');
-    await expect(page.getByTestId('end-card')).toContainText('Wiedziałeś o 2 z 5 miejsc');
+    const ring3 = page.locator('[data-testid="ring-card"][data-radius="3000"]');
+    await expect(ring3).toBeInViewport({ ratio: 0.9 });
+    await expect(ring3).toContainText('Znasz 40% (2 z 5 miejsc)');
+    const end = page.getByTestId('end-card');
+    await end.scrollIntoViewIfNeeded();
+    await expect(end).toBeInViewport({ ratio: 0.9 });
+    await expect(end).toContainText('To wszystko, co Wikipedia zna w promieniu 10 km');
+    await expect(end).toContainText('Znasz 40% (2 z 5 miejsc)');
     await grab();
     const all = texts.join('\n');
     expect(all).not.toMatch(/\b(Loading|Error|Retry|Share|Try again|Unknown|Known|Submit|Search|away|Read more|Back)\b/);
